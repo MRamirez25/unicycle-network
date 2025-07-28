@@ -568,7 +568,7 @@ def get_mnist_data(bs_train, bs_test, classes=None, new_fraction=0.5, test_fract
                                                transform=transforms.ToTensor(),
                                                download=True)
 
-    test_dataset = torchvision.datasets.MNIST(root='data/',
+    test_dataset = torchvision.datasets.MNIST(root=root,
                                               train=False,
                                               transform=transforms.ToTensor())
     
