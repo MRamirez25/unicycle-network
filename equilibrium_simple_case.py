@@ -294,17 +294,18 @@ def solve_mass_spring_system(fixed_points, moving_points, springs, alphas, initi
 fixed_points = {0: (0, 0)}  # Mass 1 is fixed
 
 # Moving mass initial positions
-moving_points = {1: (0.5, 1.0), 2: (1.0, 0.0)}  # Mass 2 & 3 are moving
+moving_points = {1: (0.0, 1.0), 2: (1.0, 1.0), 3: (1.0, 0.0)}  # Mass 2 & 3 are moving
 
 # Spring connections (mass_i, mass_j, stiffness, rest_length)
 springs = [
-    (1, 0, 1.0, 1.0),  # Spring between Mass 2 and fixed Mass 1
-    (2, 0, 1.0, 0.75),  # Spring between Mass 3 and fixed Mass 1
-    (1, 2, 1.0, 0.5)    # Spring between Mass 2 and Mass 3
+    (0, 1, 1.0, 0.6),  # Spring between Mass 2 and fixed Mass 1
+    (0, 3, 1.0, 0.8),  # Spring between Mass 3 and fixed Mass 1
+    (1, 2, 1.0, 0.7),
+    (2, 3, 1.0, 0.5)   # Spring between Mass 2 and Mass 3
 ]
 
 # Constraint angles (radians)
-alphas = {1: np.radians(30), 2: np.radians(-45)}
+alphas = {1: np.radians(30), 2: np.radians(45), 3: np.radians(-15)}
 
 # Solve system
 final_positions = solve_mass_spring_system(fixed_points, moving_points, springs, alphas)
@@ -313,7 +314,60 @@ final_positions = solve_mass_spring_system(fixed_points, moving_points, springs,
 for mass, (x, y) in final_positions.items():
     print(f"Mass {mass}: Final Position = ({x:.4f}, {y:.4f})")
 #%%
-n_units = 3
+def plot_mass_spring_system(fixed_points, moving_points, springs, final_positions):
+    """
+    Plots the initial and deformed configurations of a mass-spring system.
+
+    Parameters:
+    - fixed_points: Dict {mass_index: (x, y)} for fixed masses.
+    - moving_points: Dict {mass_index: (x_init, y_init)} for moving masses.
+    - springs: List of (mass_i, mass_j, stiffness, rest_length).
+    - final_positions: Dict {mass_index: (x_final, y_final)} for moving masses.
+    """
+
+    plt.figure(figsize=(6, 6))
+
+    # Plot initial configuration (blue dashed lines)
+    for i, j, _, _ in springs:
+        x_i, y_i = fixed_points[i] if i in fixed_points else moving_points[i]
+        x_j, y_j = fixed_points[j] if j in fixed_points else moving_points[j]
+        plt.plot([x_i, x_j], [y_i, y_j], 'bo--', alpha=0.6, label="Initial" if i == 0 and j == 1 else "")
+
+    # Plot deformed configuration (red solid lines)
+    for i, j, _, _ in springs:
+        x_i, y_i = fixed_points[i] if i in fixed_points else final_positions[i]
+        x_j, y_j = fixed_points[j] if j in fixed_points else final_positions[j]
+        plt.plot([x_i, x_j], [y_i, y_j], 'ro-', alpha=0.8, label="Deformed" if i == 0 and j == 1 else "")
+
+    # Annotate fixed points (blue)
+    for mass, (x, y) in fixed_points.items():
+        plt.scatter(x, y, color='blue', zorder=3)
+        plt.text(x, y, f" {mass} (fixed)", fontsize=12, verticalalignment='bottom', color='blue')
+
+    # Annotate initial moving points (blue)
+    for mass, (x, y) in moving_points.items():
+        plt.scatter(x, y, color='blue', zorder=3)
+        plt.text(x, y, f" {mass}", fontsize=12, verticalalignment='bottom', color='blue')
+
+    # Annotate final moving points (red)
+    for mass, (x, y) in final_positions.items():
+        plt.scatter(x, y, color='red', zorder=3)
+        plt.text(x, y, f" {mass}'", fontsize=12, verticalalignment='bottom', color='red')
+
+    # Labels and legend
+    plt.xlabel("X Position")
+    plt.ylabel("Y Position")
+    plt.axhline(0, color='gray', linewidth=0.5)
+    plt.axvline(0, color='gray', linewidth=0.5)
+    plt.legend()
+    plt.title("Mass-Spring System: Initial vs. Deformed Configuration")
+    plt.grid()
+    plt.show()
+
+#%%
+plot_mass_spring_system(fixed_points, moving_points, springs, final_positions)
+#%%
+n_units = 4
 dt = 0.01
 #%%
 unicycle_network = UnicycleNetwork(n_inp=1, n_units=n_units, dt=dt, lin_stiff_min=0.1, lin_stiff_max=0.5, 
@@ -330,22 +384,26 @@ model = unicycle_network.to(device)
 #%%
 stiffness_coupling_matrix = torch.ones((n_units, n_units))
 stiffness_coupling_matrix.fill_diagonal_(0)
+stiffness_coupling_matrix[0,2], stiffness_coupling_matrix[2,0] = 0, 0
+stiffness_coupling_matrix[1,3], stiffness_coupling_matrix[3,1] = 0, 0 
 #%%
 unicycle_network.stiffness_coupling_matrix = torch.nn.Parameter((stiffness_coupling_matrix).to(device), requires_grad=False)
 #%%
-unicycle_network.eq_distances_matrix[0,1,0], unicycle_network.eq_distances_matrix[1,0,0] = a12, a12
-unicycle_network.eq_distances_matrix[0,2,0], unicycle_network.eq_distances_matrix[2,0,0] = a13, a13
-unicycle_network.eq_distances_matrix[1,2,0], unicycle_network.eq_distances_matrix[2,1,0] = a23, a23
+unicycle_network.eq_distances_matrix[0,1,0], unicycle_network.eq_distances_matrix[1,0,0] = 0.6, 0.6
+unicycle_network.eq_distances_matrix[0,3,0], unicycle_network.eq_distances_matrix[3,0,0] = 0.8, 0.8
+unicycle_network.eq_distances_matrix[1,2,0], unicycle_network.eq_distances_matrix[2,1,0] = 0.7, 0.7
+unicycle_network.eq_distances_matrix[3,2,0], unicycle_network.eq_distances_matrix[2,3,0] = 0.5, 0.5
+
 unicycle_network.lin_damping = unicycle_network.lin_damping.to(device)
 unicycle_network.ang_damping = unicycle_network.ang_damping.to(device)
 unicycle_network.mass_vector = unicycle_network.mass_vector.to(device)
 unicycle_network.j_vector = unicycle_network.j_vector.to(device)
 #%%
-x = torch.tensor([[0,x2_init,x3_init]]).to(device).double()
-z = torch.tensor([[0,y2_init,y3_init]]).to(device).double()
-theta = torch.tensor([[0, alpha_2, alpha_3]]).to(device).double()
-omega = torch.zeros((1,3)).to(device)
-s = torch.zeros((1,3)).to(device)
+x = torch.tensor([[0,moving_points[1][0],moving_points[2][0], moving_points[3][0]]]).to(device).double()
+z = torch.tensor([[0,moving_points[1][1],moving_points[2][1], moving_points[3][1]]]).to(device).double()
+theta = torch.tensor([[0, alphas[1], alphas[2], alphas[3]]]).to(device).double()
+omega = torch.zeros((1,n_units)).to(device)
+s = torch.zeros((1,n_units)).to(device)
 #%%
 states_list = []
 u_lin = torch.zeros((1, 8000, 1), device=device)
