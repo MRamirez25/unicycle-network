@@ -8,6 +8,7 @@ import torch
 import optuna
 from matplotlib.animation import FuncAnimation
 import numpy as np
+import random
 #%%
 bs_train, bs_test = 100, 100
 train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=[0,1,2], new_fraction=0.2, test_fraction=0.2)
@@ -212,7 +213,7 @@ model.readout(states_list[-1])
 states_list[0][0,3:6]
 # %%
 study_name = f"unicycle_opt_all_classes_w_ang_input"
-storage_name = "sqlite:///{}.db".format(study_name)
+storage_name = "sqlite:///optuna_databases/{}.db".format(study_name)
 study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
 params = study.best_params
 #%%
@@ -249,7 +250,19 @@ eq_dist_max_ang = params['eq_dist_max_ang']
 n_epochs = params['n_epochs']
 n_connections_anchor = int(n_connections * anchor_con_fraction)
 n_connections_anchor_ang = int(n_connections_ang * anchor_con_fraction_ang)
+#%%
+seed = 89
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
 
+# If using CUDA
+torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+# Ensure deterministic behavior (might affect performance)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 #%%
 train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=[0,1,2,3,4,5,6,7,8,9], new_fraction=0.5, test_fraction=0.5)
 #%%
@@ -292,7 +305,7 @@ def test(data_loader):
             angular_input = torch.zeros_like(images)
 
             images = images.to(device)
-            # images = images[:, perm, :]
+            images = images[:, perm, :]
             angular_input = angular_input.to(device)
             labels = labels.to(device)
 
@@ -376,7 +389,7 @@ for epoch in range(n_epochs):
         angular_input = torch.zeros_like(images)
 
         images = images.to(device)
-        # images = images[:, perm, :]
+        images = images[:, perm, :]
         angular_input = angular_input.to(device)
         labels = labels.to(device)
 
@@ -537,4 +550,10 @@ print(labels[sample_idx])
 # Create animation
 ani = FuncAnimation(fig, update_no_history, frames=784, blit=True)
 ani.save(f'state_evolution_{labels[sample_idx].detach()}_both_ppt_crop.mp4')
+# %%
+# %%
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+#%%
+print(count_trainable_parameters(model))  # Output: Total number of trainable parameters
 # %%

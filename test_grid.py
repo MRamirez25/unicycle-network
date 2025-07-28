@@ -10,7 +10,7 @@ from matplotlib.animation import FuncAnimation
 import numpy as np
 # %%
 study_name = f"unicycle_opt_all_classes_w_ang_input"
-storage_name = "sqlite:///{}.db".format(study_name)
+storage_name = "sqlite:///optuna_databases/{}.db".format(study_name)
 study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
 params = study.best_params
 #%%
@@ -18,10 +18,10 @@ n_units = params['n_units']
 lr = params['lr']
 lin_stiff_min =  params['lin_stiff_min']
 lin_stiff_max =  params['lin_stiff_max']
-ang_stiff_min =  params['ang_stiff_min']
-ang_stiff_max =  params['ang_stiff_max']
-lin_damping_min =  params['lin_damping_min']
-lin_dmping_max =  params['lin_damping_max']
+ang_stiff_min =  0.1#params['ang_stiff_min']
+ang_stiff_max =  0.2#params['ang_stiff_max']
+lin_damping_min =  params['lin_damping_min']*1.5
+lin_dmping_max =  params['lin_damping_max']*1.5
 ang_damping_min =  params['ang_damping_min']
 ang_damping_max  = params['ang_damping_max']
 bs_train = params['batch_size']
@@ -30,21 +30,21 @@ dt = params['dt']
 inp_bias =  params['inp_bias']
 anchor_con_fraction = params['anchor_con_fraction']
 num_non_zero = params['non_zero_elements']
-magnitude_min = params['magnitude_min']
-magnitude_max = params['magnitude_max']
-non_zero_elements_ang = 0#params['non_zero_elements_ang']
-magnitude_min_ang = params['magnitude_min_ang']
+magnitude_min = params['magnitude_min']*0.1
+magnitude_max = params['magnitude_max']*0.1
+non_zero_elements_ang = params['non_zero_elements_ang']
+magnitude_min_ang = params['magnitude_min_ang']*0.5
 magnitude_max_ang = params['magnitude_max_ang']
 n_connections = 3#params['n_connections']
 washup = 0#params['washup_steps']
-n_steps_readout = params['steps_readout']
+n_steps_readout = 0#params['steps_readout']
 n_connections_ang = 0#params['n_connections_ang']
 anchor_con_fraction_ang = params['anchor_con_fraction_ang']
 eq_dist_min = params['eq_dist_min']
 eq_dist_max = params['eq_dist_max']
 eq_dist_min_ang = params['eq_dist_min_ang']
 eq_dist_max_ang = params['eq_dist_max_ang']
-n_epochs = 5#params['n_epochs']
+n_epochs = 3#params['n_epochs']
 n_connections_anchor = int(n_connections * anchor_con_fraction)
 n_connections_anchor_ang = int(n_connections_ang * anchor_con_fraction_ang)
 
@@ -94,7 +94,7 @@ def test(data_loader):
             angular_input = angular_input.to(device)
             labels = labels.to(device)
 
-            _, output = model(images, images)
+            _, output = model(angular_input, images)
             test_loss += objective(output, labels).item()
             pred = output.data.max(1, keepdim=True)[1]
             correct += pred.eq(labels.data.view_as(pred)).sum()
@@ -110,16 +110,21 @@ n_epochs = n_epochs
 objective = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 #%%
+theta_init_test = torch.randn(n_units).repeat(bs_train,1)
+
+#%%
 # # %%
 # for parameter in model.parameters():
 #     print(parameter)
 # model.set_init_states_random(bs_train)
-model.set_init_states_grid(bs_train, num_rows=5, num_cols=4, spacing=(0.75, 0.75))
+num_rows = 5
+num_cols = 4
+model.set_init_states_grid(bs_train, num_rows=num_rows, num_cols=num_cols, spacing=(0.75, 0.75))
 model.x_init = model.x_init.to(device)
 model.z_init = model.z_init.to(device)
-model.theta_init = model.theta_init.to(device)
+model.theta_init = theta_init_test.to(device)
 model.s_init = model.s_init.to(device)
-model.omega_init = model.omega_init.to(device)
+model.omega_init = torch.zeros_like(model.omega_init).to(device)
 model.lin_input_map = model.lin_input_map.to(device)
 model.ang_input_map = model.ang_input_map.to(device)
 model.unicycle_network.lin_damping = model.unicycle_network.lin_damping.to(device)
@@ -134,6 +139,47 @@ model.omega_init[:,0] = 0
 # test_score = test(test_loader)
 # print(f"Validation score: {valid_score}")
 # print(f"Test score: {test_score}")
+#%%
+def lattice_adjacency_matrix(rows, cols, connect_diagonal=False):
+    """Generate an adjacency matrix for a grid with optional diagonal connections."""
+    N = rows * cols
+    adjacency_matrix = np.zeros((N, N), dtype=int)
+
+    def index(r, c):
+        """Convert 2D grid coordinates to 1D index."""
+        return r * cols + c
+
+    # Loop through each grid cell
+    for r in range(rows):
+        for c in range(cols):
+            i = index(r, c)
+
+            # 4-connected neighbors
+            if r > 0:  # Up
+                adjacency_matrix[i, index(r - 1, c)] = 1
+            if r < rows - 1:  # Down
+                adjacency_matrix[i, index(r + 1, c)] = 1
+            if c > 0:  # Left
+                adjacency_matrix[i, index(r, c - 1)] = 1
+            if c < cols - 1:  # Right
+                adjacency_matrix[i, index(r, c + 1)] = 1
+
+            # 8-connected neighbors (diagonals)
+            if connect_diagonal:
+                if r > 0 and c > 0:  # Top-left
+                    adjacency_matrix[i, index(r - 1, c - 1)] = 1
+                if r > 0 and c < cols - 1:  # Top-right
+                    adjacency_matrix[i, index(r - 1, c + 1)] = 1
+                if r < rows - 1 and c > 0:  # Bottom-left
+                    adjacency_matrix[i, index(r + 1, c - 1)] = 1
+                if r < rows - 1 and c < cols - 1:  # Bottom-right
+                    adjacency_matrix[i, index(r + 1, c + 1)] = 1
+
+    return adjacency_matrix + adjacency_matrix.T  # Ensure symmetry
+#%%
+adjacency_matrix = lattice_adjacency_matrix(num_rows, num_cols, False)
+#%%
+model.unicycle_network.stiffness_coupling_matrix = torch.nn.Parameter(torch.from_numpy(adjacency_matrix).to(device), requires_grad=False)
 #%%
 x = model.x_init[0:1,:]
 z = model.z_init[0:1,:]
@@ -165,7 +211,7 @@ plt.show()
 model.set_init_states(bs_train, x,z,theta,s,omega)
 perm = torch.randperm(784).to(device)
 #%%
-def plot_graph(x_coords, y_coords, adjacency_matrix):
+def plot_graph(x_coords, y_coords, adjacency_matrix, save_path=None):
     """
     Plots N points in 2D based on x_coords and y_coords.
     Draws a line between points i and j if adjacency_matrix[i, j] is nonzero.
@@ -199,9 +245,12 @@ def plot_graph(x_coords, y_coords, adjacency_matrix):
     ax.set_ylabel("Y")
     ax.set_title("2D Graph Plot")
     plt.grid(True)
+    if save_path:
+        plt.savefig(f"plots/{save_path}")
     plt.show()
 #%%
-plot_graph(x.T.cpu().detach().numpy(),z.T.cpu().detach().numpy(), model.unicycle_network.stiffness_coupling_matrix.cpu().detach().numpy())
+plot_graph(x.T.cpu().detach().numpy(),z.T.cpu().detach().numpy(), model.unicycle_network.stiffness_coupling_matrix.cpu().detach().numpy(), 
+save_path=None)
 #%%
 for epoch in range(n_epochs):
     model.train()
@@ -218,7 +267,7 @@ for epoch in range(n_epochs):
 
         optimizer.zero_grad()
         # with torch.no_grad():
-        states_list, output = model(images, images)
+        states_list, output = model(angular_input, images)
         loss = objective(output, labels)
         loss.backward()
         # Check gradients
@@ -238,7 +287,7 @@ for epoch in range(n_epochs):
     # print(model.lin_input_map)
            # %%
 #%%
-sample_idx = 10
+sample_idx = 16
 print(labels[sample_idx])
 #%%
 all_states_time_res = torch.stack(states_list, dim=1)
@@ -329,7 +378,7 @@ ax.set_ylim(y_states.min() - 0.2, y_states.max() + 0.2)
 
 # Dynamically set scale and width based on the data range
 # These factors can be adjusted based on how the arrows appear
-scale_factor = 0.3 * min(x_range, y_range).item()
+scale_factor = 1.5 * min(x_range, y_range).item()
 width_factor = 0.002 * min(x_range, y_range).item()
 
 # Initialize the positions and directions for the arrows
@@ -370,5 +419,5 @@ print(labels[sample_idx])
 #%%
 # Create animation
 ani = FuncAnimation(fig, update_no_history, frames=784, blit=True)
-ani.save(f'state_evolution_{labels[sample_idx].detach()}_grid.mp4')
+ani.save(f'animations/state_evolution_{labels[sample_idx].detach()}_grid.mp4')
 # %%

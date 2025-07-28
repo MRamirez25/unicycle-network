@@ -6,6 +6,8 @@ from unicycle_network_class import UnicycleNetwork, UnicycleReservoir
 from torch import nn, optim
 import torch
 import optuna
+import numpy as np
+import random
 #%%
 bs_train, bs_test = 100, 100
 train_loader, valid_loader, test_loader = get_FordA_data(bs_train, bs_test)
@@ -203,7 +205,7 @@ model.readout(states_list[-1])
 states_list[0][0,3:6]
 # %%
 study_name = f"unicycle_forda_w_ang_input"
-storage_name = "sqlite:///{}.db".format(study_name)
+storage_name = "sqlite:///optuna_databases/{}.db".format(study_name)
 study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
 params = study.best_params
 #%%
@@ -237,9 +239,22 @@ eq_dist_min = params['eq_dist_min']
 eq_dist_max = params['eq_dist_max']
 eq_dist_min_ang = params['eq_dist_min_ang']
 eq_dist_max_ang = params['eq_dist_max_ang']
-n_epochs = params['n_epochs']
+n_epochs = 6#params['n_epochs']
 n_connections_anchor = int(n_connections * anchor_con_fraction)
 n_connections_anchor_ang = int(n_connections_ang * anchor_con_fraction_ang)
+#%%
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+
+# If using CUDA
+torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+# Ensure deterministic behavior (might affect performance)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 #%%
 train_loader, valid_loader, test_loader = get_FordA_data(bs_train, bs_test)
 #%%
@@ -385,4 +400,9 @@ for epoch in range(n_epochs):
     print(f"Validation score: {valid_score}")
     print(f"Test score: {test_score}")
     # print(model.lin_input_map)
+# %%
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+#%%
+print(count_trainable_parameters(model))  # Output: Total number of trainable parameters
 # %%
