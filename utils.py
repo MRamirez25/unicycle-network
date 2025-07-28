@@ -557,9 +557,13 @@ def get_mackey_glass(lag=1, washout=200, window_size=0):
 
 #     return train_loader, valid_loader, test_loader
 
-def get_mnist_data(bs_train, bs_test, classes=None, new_fraction=0.5, test_fraction=0.5):
+def get_mnist_data(bs_train, bs_test, classes=None, new_fraction=0.5, test_fraction=0.5, path=None):
+    if not path:
+        root = 'data/'
+    else:
+        root = path
     # Load the MNIST dataset
-    train_dataset = torchvision.datasets.MNIST(root='data/',
+    train_dataset = torchvision.datasets.MNIST(root=root,
                                                train=True,
                                                transform=transforms.ToTensor(),
                                                download=True)
