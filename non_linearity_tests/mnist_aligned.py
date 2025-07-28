@@ -74,7 +74,10 @@ torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 #%%
-train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=[0,1,2,3,4,5,6,7,8,9], new_fraction=0.5, test_fraction=0.5)
+root = parent_dir + '/data/'
+# Load the MNIST dataset
+train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=[0,1,2,3,4,5,6,7,8,9], 
+                                                         new_fraction=0.5, test_fraction=0.5, path=root)
 #%%
 lin_input_map = torch.zeros(1, n_units)
 num_non_zero = num_non_zero
