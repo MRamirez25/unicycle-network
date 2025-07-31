@@ -1,10 +1,15 @@
+import os
+
+os.environ["JAX_PLATFORM_NAME"] = "cpu"
 import jax
 import jax.numpy as jnp
 from jax import random, jit, vmap
 import time, timeit
-from unicycle_network_class import UnicycleNetwork
+from unicycle_network_class import UnicycleNetwork, UnicycleReservoir
+from unicycle_network_vmap import batched_forward
 import torch
 import numpy as np
+import optuna
 # jax.config.update('jax_platform_name', 'cpu')
 # print("devices", jax.devices())
 # Function to initialize random parameters
@@ -67,6 +72,7 @@ def angle_to_unit_vector(angle):
     return jnp.stack((cos_angle, sin_angle), axis=-1)
 
 # Define forward function of UnicycleNetwork with batch support
+@jit
 def unicycle_network_forward(params, input_map, u_lin, u_ang, x, z, theta, s, omega, dt):
 
     lin_damping, ang_damping, dist_ang_coupling, stiffness_coupling_matrix, eq_distances_matrix = params
@@ -126,7 +132,7 @@ rng = random.PRNGKey(0)
 batch_size, n_units, n_inp = 100, 200, 1  # Add batch size
 params = initialize_params(rng, n_units, n_inp, 0.5, 1.0, 0.1, 0.3, 0.1, 0.2, 0.1, 0.2, 0.5, 1.0)
 input_map = initialize_input_map(rng, 1, n_units)
-start = time.time()
+# start = time.time()
 init_state = (
     random.uniform(rng, (batch_size, n_units), minval=0.1, maxval=0.6),
     random.uniform(rng, (batch_size, n_units), minval=0.1, maxval=0.2),
@@ -134,53 +140,200 @@ init_state = (
     random.uniform(rng, (batch_size, n_units)),
     random.uniform(rng, (batch_size, n_units))
 )
-end = time.time()
-print("time to initialize init states", end - start)
+print("init",init_state)
+# end = time.time()
+# print("time to initialize init states", end - start)
 dt = 0.01
 steps = 784
 u_lin = jnp.zeros((steps, batch_size, 1))
 u_ang = jnp.zeros((steps, batch_size, 1))
-print("device", u_lin.device())
+print("device", u_lin.device)
 # Run forward pass with batches
 print("start")
 start = time.time()
 state_trajectory, final_state = reservoir_forward(params, input_map, u_lin, u_ang, init_state, dt)
 end = time.time()
-print("elapsed time 1", end - start)
+print("elapsed time jax 1", end - start)
+print("Final State:", final_state[0].shape)
+
 # print("Final State:", final_state)
-
-x, z, theta, s, omega = init_state
+print("start")
 start = time.time()
-for t in range(steps):
-    x, z, theta, s, omega = unicycle_network_forward(params, input_map, u_lin[t], u_ang[t], x, z, theta, s, omega, dt)
+state_trajectory, final_state = reservoir_forward(params, input_map, u_lin, u_ang, init_state, dt)
 end = time.time()
-print("elapsed time 2", end - start)
-print(x.shape)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("elapsed time jax 2", end - start)
+print("Final State:", final_state[0].shape)
 
-unicycle_network_torch = UnicycleNetwork(1, 200, dt=0.01)
-unicycle_network_torch.to(device)
+print("start")
+start = time.time()
+state_trajectory, final_state = reservoir_forward(params, input_map, u_lin, u_ang, init_state, dt)
+end = time.time()
+print("elapsed time jax 3", end - start)
+print("Final State:", final_state[0].shape)
+
+print(final_state)
+
+print("init", init_state)
+
+start = time.time()   
+
+x_cuda = jax.device_put(final_state[0], device=jax.devices("gpu")[0])
+z_cuda = jax.device_put(final_state[1], device=jax.devices("gpu")[0])
+theta_cuda = jax.device_put(final_state[2], device=jax.devices("gpu")[0])
+s_cuda = jax.device_put(final_state[3], device=jax.devices("gpu")[0])
+omega_cuda = jax.device_put(final_state[4], device=jax.devices("gpu")[0])
+
+end = time.time()
+print("elapsed time moving to gpu", end - start)
+
+# dt = 0.01
+# steps = 784
+# u_lin_batch = jnp.zeros((batch_size, steps, 1))
+# u_ang_batch = jnp.zeros((batch_size, steps, 1))
+# init_state_batch = init_state
+# start = time.time()
+# # Call:
+# trajectories, final_states = batched_forward(
+#     params, input_map,
+#     u_lin_batch, u_ang_batch,
+#     init_state_batch, dt
+# )
+# end = time.time()
+# print("elapsed time jax batched 1", end - start)
+# print("Final States Shape:", final_states[0].shape)  
+
+# start = time.time()
+# # Call:
+# trajectories, final_states = batched_forward(
+#     params, input_map,
+#     u_lin_batch, u_ang_batch,
+#     init_state_batch, dt
+# )
+# end = time.time()
+# print("elapsed time jax batched 2", end - start)
+# print("Final States Shape:", final_states[0].shape)  
+# print("Final States:", final_states)
+# x, z, theta, s, omega = init_state
+# start = time.time()
+# for t in range(steps):
+#     x, z, theta, s, omega = unicycle_network_forward(params, input_map, u_lin[t], u_ang[t], x, z, theta, s, omega, dt)
+# end = time.time()
+# print("elapsed time jax 2", end - start)
+# print(x.shape)
+
+torch.cuda.empty_cache()
+torch.cuda.ipc_collect()
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("torch device", device)
+# Convert JAX parameters to PyTorch tensors
+
+storage_name = f"unicycle_nets_mnist_all_digits"
+study_name = "not_aligned_w_ang_input_w_ang_connections"
+storage_name = f"sqlite:///optuna_databases/{storage_name}.db"
+study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
+params = study.best_params
+#%%
+aligned_orientations = False  # Set to True if you want aligned orientations, False otherwise
+ang_input = True  # Set to True if you want angular input, False otherwise
+#%%
+n_units = n_units
+lr = params['lr']
+lin_stiff_min =  params['lin_stiff_min']
+lin_stiff_max =  params['lin_stiff_max']
+ang_stiff_min =  params['ang_stiff_min']
+ang_stiff_max =  params['ang_stiff_max']
+lin_damping_min =  params['lin_damping_min']
+lin_damping_max =  params['lin_damping_max']
+ang_damping_min =  params['ang_damping_min']
+ang_damping_max  = params['ang_damping_max']
+bs_train = batch_size
+bs_test = bs_train
+dt = params['dt']
+inp_bias =  params['inp_bias']
+anchor_con_fraction = params['anchor_con_fraction']
+num_non_zero = params['non_zero_elements']
+magnitude_min = params['magnitude_min']
+magnitude_max = params['magnitude_max']
+non_zero_elements_ang = params['non_zero_elements_ang']
+magnitude_min_ang = -params['magnitude_max_ang']
+magnitude_max_ang = params['magnitude_max_ang']
+n_connections_fraction = params['n_connections_fraction']
+n_connections = int(n_units*n_connections_fraction)
+washup = params['washup_steps']
+n_steps_readout = params['steps_readout']
+anchor_con_fraction_ang = params['anchor_con_fraction_ang']
+eq_dist_min = params['eq_dist_min']
+eq_dist_max = params['eq_dist_max']
+eq_dist_min_ang = params['eq_dist_min_ang']
+eq_dist_max_ang = params['eq_dist_max_ang']
+n_epochs = params['n_epochs']
+n_connections_anchor = int(n_units * anchor_con_fraction)
+n_connections_ang_fraction = params["n_connections_ang_fraction"]
+n_connections_ang = int(n_connections_ang_fraction*n_units)
+n_connections_anchor_ang = int(anchor_con_fraction_ang * n_units)
+#%%
+lin_input_map = torch.zeros(1, n_units)
+num_non_zero = num_non_zero
+non_zero_indices = torch.randperm(n_units)[:num_non_zero]  # Randomly select indices
+non_zero_values_min = magnitude_min
+non_zero_values_max = magnitude_max
+lin_input_map[0, non_zero_indices] = torch.rand(num_non_zero) * (non_zero_values_max- non_zero_values_min) + non_zero_values_min  # Random magnitudes
+#%%
+# # Randomized ang_input_map
+ang_input_map = torch.zeros(1, n_units)
+if ang_input:
+    num_non_zero_ang = non_zero_elements_ang
+    non_zero_indices = torch.randperm(n_units)[:num_non_zero_ang]  # Randomly select indices
+    non_zero_values_ang = magnitude_min_ang
+    magnitude_max_ang = magnitude_max_ang
+    ang_input_map[0, non_zero_indices] = torch.rand(num_non_zero_ang) * (magnitude_max_ang- non_zero_values_ang) + non_zero_values_ang  # Random magnitudes 
+#%%
+model = UnicycleReservoir(n_inp=1, n_units=n_units, dt=dt, n_out=10, lin_input_map=lin_input_map, 
+                          lin_stiff_min=lin_stiff_min, lin_damping_min=lin_damping_min, lin_damping_max=lin_damping_max, lin_stiff_max=lin_stiff_max,
+                          eq_dist_min=eq_dist_min, eq_dist_max=eq_dist_max, eq_dist_min_ang=eq_dist_min_ang,
+                          eq_dist_max_ang=eq_dist_max_ang,  
+                          n_connections=n_connections, n_connections_anchor=n_connections_anchor, 
+                          n_past_steps_readout=n_steps_readout, n_connections_ang=n_connections_ang, n_connections_anchor_ang=n_connections_anchor_ang,
+                          ang_stiff_min=ang_stiff_min, ang_stiff_max=ang_stiff_max, ang_damping_min=ang_damping_min, ang_damping_max=ang_damping_max,
+                          inp_bias=inp_bias, ang_input_map=ang_input_map).to(device)
+
+
+
 x = torch.from_numpy(np.asarray(init_state[0].copy())).to(device)
 z = torch.from_numpy(np.asarray(init_state[1].copy())).to(device)
 theta = torch.from_numpy(np.asarray(init_state[2].copy())).to(device)
 s = torch.from_numpy(np.asarray(init_state[3].copy())).to(device)
 omega = torch.from_numpy(np.asarray(init_state[4].copy())).to(device)
 u_lin = torch.from_numpy(np.asarray(u_lin).copy()).to(device)
-unicycle_network_torch.lin_damping = unicycle_network_torch.lin_damping.to(device)
-unicycle_network_torch.ang_damping = unicycle_network_torch.ang_damping.to(device)
+
+u_lin = u_lin.permute((1, 0, 2))  # Reshape to (batch_size, steps, n_inp)
+print("u_lin shape", u_lin.shape)
+# Move initial states to GPU if available
+model.x_init = x
+model.z_init = z
+model.theta_init = theta
+model.s_init = s
+model.omega_init = omega
+model.lin_input_map = model.lin_input_map.to(device)
+model.ang_input_map = model.ang_input_map.to(device)
+model.unicycle_network.lin_damping = model.unicycle_network.lin_damping.to(device)
+model.unicycle_network.ang_damping = model.unicycle_network.ang_damping.to(device)
+model.unicycle_network.mass_vector = model.unicycle_network.mass_vector.to(device)
+model.unicycle_network.j_vector = model.unicycle_network.j_vector.to(device)
+
 start = time.time()
-for t in range(steps):
-    x, z, theta, s, omega = unicycle_network_torch.forward(u_lin[t], u_lin[t], x, z, theta, s, omega)
+states_list_torch, output_torch = model(u_lin, u_lin)
 end = time.time()
-print("elapsed time 3", end - start)
-print(x.shape)
+print("elapsed time torch", end - start)
+# # breakpoint()
+# # print(states_list_torch[-1][:,:100].detach().cpu().numpy() - np.array(final_state[0]))
 
-# # Assuming `reservoir_forward` is defined and you have parameters and initial state
-# def loss_fn(params, u_lin, u_ang, init_state, dt, steps):
-#     state_trajectory, final_state = reservoir_forward(params, input_map, u_lin, u_ang, init_state, dt, steps)
-#     # Define your loss based on the final state or trajectory
-#     return jnp.sum(final_state[0])  # Example loss
+# # # Assuming `reservoir_forward` is defined and you have parameters and initial state
+# # def loss_fn(params, u_lin, u_ang, init_state, dt, steps):
+# #     state_trajectory, final_state = reservoir_forward(params, input_map, u_lin, u_ang, init_state, dt, steps)
+# #     # Define your loss based on the final state or trajectory
+# #     return jnp.sum(final_state[0])  # Example loss
 
-# Use jax.grad to compute gradients
-# gradient_fn = jax.grad(loss_fn)
-# gradients = gradient_fn(params, u_lin, u_ang, init_state, dt, steps)
+# # Use jax.grad to compute gradients
+# # gradient_fn = jax.grad(loss_fn)
+# # gradients = gradient_fn(params, u_lin, u_ang, init_state, dt, steps)
