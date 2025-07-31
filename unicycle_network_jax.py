@@ -175,13 +175,14 @@ print(final_state)
 
 print("init", init_state)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 start = time.time()   
 
-x_cuda = jax.device_put(final_state[0], device=jax.devices("gpu")[0])
-z_cuda = jax.device_put(final_state[1], device=jax.devices("gpu")[0])
-theta_cuda = jax.device_put(final_state[2], device=jax.devices("gpu")[0])
-s_cuda = jax.device_put(final_state[3], device=jax.devices("gpu")[0])
-omega_cuda = jax.device_put(final_state[4], device=jax.devices("gpu")[0])
+x_cuda = torch.from_numpy(np.array(final_state[0])).to(device)
+z_cuda = torch.from_numpy(np.array(final_state[1])).to(device)
+theta_cuda = torch.from_numpy(np.array(final_state[2])).to(device)
+s_cuda = torch.from_numpy(np.array(final_state[3])).to(device)
+omega_cuda = torch.from_numpy(np.array(final_state[4])).to(device)
 
 end = time.time()
 print("elapsed time moving to gpu", end - start)
