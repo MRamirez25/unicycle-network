@@ -8,18 +8,26 @@ from utils import get_mnist_data
 import time
 
 # Objective function for Optuna
-def objective(trial, aligned_orientations=True, ang_input=False, ang_connections=False):
+def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=None):
     # Suggest hyperparameters for Optuna to search
-    n_units = trial.suggest_int('n_units', 10, 50, step=10)
+    aligned_orientations = trial.suggest_categorical("aligned_orientations", [True, False]) if aligned_orientations is None else aligned_orientations
+    if not aligned_orientations:
+        ang_input = trial.suggest_categorical("ang_input", [True, False]) if ang_input is None else ang_input
+        ang_connections = trial.suggest_categorical("ang_connections", [True, False]) if ang_connections is None else ang_connections
+    else:
+        ang_input = False
+        ang_connections = False
+
+    n_units = trial.suggest_int('n_units', 10, 100, step=10)
     lr = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
     lin_stiff_min = trial.suggest_float('lin_stiff_min', 0.1, 1.0)
     lin_stiff_max = trial.suggest_float('lin_stiff_max', lin_stiff_min, 5.0)  # lin_stiff_max >= lin_stiff_min
-    ang_stiff_min = trial.suggest_float('ang_stiff_min', 0., 1.0)
+    ang_stiff_min = trial.suggest_float('ang_stiff_min', 0.1, 1.0)
     ang_stiff_max = trial.suggest_float('ang_stiff_max', ang_stiff_min, 2.0)  # ang_stiff_max >= ang_stiff_min
     lin_damping_min = trial.suggest_float('lin_damping_min', 0.1, 1.0)
     lin_damping_max = trial.suggest_float('lin_damping_max', lin_damping_min, 5.0)
-    ang_damping_min = trial.suggest_float('ang_damping_min', 0.1, 1.0)
-    ang_damping_max = trial.suggest_float('ang_damping_max', ang_damping_min, 2.0)
+    ang_damping_min = trial.suggest_float('ang_damping_min', 0.1, 10.0)
+    ang_damping_max = trial.suggest_float('ang_damping_max', ang_damping_min, 20.0)
     bs = trial.suggest_int("batch_size", 50, 300, step=50)
     dt = trial.suggest_float("dt", 0.0001, 0.01, step=0.0005)
     inp_bias = trial.suggest_float("inp_bias", -1,1)
@@ -29,7 +37,7 @@ def objective(trial, aligned_orientations=True, ang_input=False, ang_connections
     lin_input_map = torch.zeros(1, n_units)
     num_non_zero = trial.suggest_int("non_zero_elements", 1, n_units)
     non_zero_indices = torch.randperm(n_units)[:num_non_zero]  # Randomly select indices
-    non_zero_values = trial.suggest_float("magnitude_min", 1.0, 10.0)
+    non_zero_values = trial.suggest_float("magnitude_min", -10.0, 0.0)
     magnitude_max = trial.suggest_float("magnitude_max", non_zero_values, 20)
     lin_input_map[0, non_zero_indices] = torch.rand(num_non_zero) * (magnitude_max- non_zero_values) + non_zero_values  # Random magnitudes
 
@@ -38,26 +46,28 @@ def objective(trial, aligned_orientations=True, ang_input=False, ang_connections
     if ang_input:
         num_non_zero_ang = trial.suggest_int("non_zero_elements_ang", 1, n_units)
         non_zero_indices = torch.randperm(n_units)[:num_non_zero_ang]  # Randomly select indices
-        non_zero_values_ang = trial.suggest_float("magnitude_min_ang", 0.1, 10.0)
-        magnitude_max_ang = trial.suggest_float("magnitude_max_ang", non_zero_values_ang, 20)
+        non_zero_values_ang = trial.suggest_float("magnitude_min_ang", -10, 0.0)
+        magnitude_max_ang = trial.suggest_float("magnitude_max_ang", non_zero_values_ang, 10)
         ang_input_map[0, non_zero_indices] = torch.rand(num_non_zero_ang) * (magnitude_max_ang- non_zero_values_ang) + non_zero_values_ang  # Random magnitudes
 
-    n_connections = trial.suggest_int('n_connections', 3, int(n_units*0.7), step=5)
+    n_connections_fraction = trial.suggest_float("n_connections_fraction", 0.2, 1.0, step=0.1)    
+    n_connections = int(n_units*n_connections_fraction)
     washup = trial.suggest_int('washup_steps', 0, 4000, step=1000)
-    n_connections_anchor = int(n_connections_anchor_fraction * n_connections)
+    n_connections_anchor = int(n_connections_anchor_fraction * n_units)
     n_steps_readout = trial.suggest_int("steps_readout", 0, 100, step=10)
     if not ang_connections:
         n_connections_ang = 0
         n_connections_anchor_ang = 0
     else:
-        n_connections_ang = trial.suggest_int("n_connections_ang", 2, int(n_units*0.7), step=5)
+        n_connections_ang_fraction = trial.suggest_float("n_connections_ang_fraction", 0.2, 1.0, step=0.1)
+        n_connections_ang = int(n_units*n_connections_ang_fraction)
         n_connections_anchor_fraction_ang = trial.suggest_float("anchor_con_fraction_ang", 0, 1.0, step=0.1)
-        n_connections_anchor_ang = int(n_connections_anchor_fraction_ang * n_connections)
+        n_connections_anchor_ang = int(n_connections_anchor_fraction_ang * n_units)
 
     eq_dist_min = trial.suggest_float("eq_dist_min", 0.2,1.0)
     eq_dist_max = trial.suggest_float("eq_dist_max", eq_dist_min, 2.0)
-    eq_dist_min_ang = trial.suggest_float("eq_dist_min_ang", 0.0, 3.14)
-    eq_dist_max_ang = trial.suggest_float("eq_dist_max_ang", eq_dist_min_ang, 6.28)
+    eq_dist_min_ang = trial.suggest_float("eq_dist_min_ang", -2*torch.pi, 0.0)
+    eq_dist_max_ang = trial.suggest_float("eq_dist_max_ang", eq_dist_min_ang, 2*torch.pi)
 
     # Initialize the model with the suggested hyperparameters
     classes = [0,1,2,3,4,5,6,7,8,9]
@@ -219,7 +229,7 @@ if __name__ == '__main__':
     #     if trial.datetime_complete and trial.datetime_start:
     #         duration = trial.datetime_complete - trial.datetime_start
     #         print(f"Trial {trial.number} took {duration.total_seconds()} seconds")
-    study.optimize(partial(objective, aligned_orientations=False, ang_input=True, ang_connections=False), timeout=3600*2)
+    study.optimize(partial(objective, aligned_orientations=None, ang_input=None, ang_connections=None), timeout=3600*8)
 
     # Get the best hyperparameters
     best_params = study.best_params
