@@ -157,7 +157,7 @@ def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=
         # Calculate validation accuracy
         if epoch == 0:
             validation_accuracy = test(valid_loader, model, objective_fn, bs_test)
-            if validation_accuracy < 20:
+            if validation_accuracy < 50:
                 break
     else:
         validation_accuracy = test(valid_loader, model, objective_fn, bs_test)
@@ -195,35 +195,9 @@ if __name__ == '__main__':
     # device = "cpu"
     # Load your data (train_loader, valid_loader, and test_loader)
 
-    # Create a study to optimize the validation accuracy
-    study_name = "unicycle_opt_all_classes_aligned_no_ang_input_no_ang_connections"
-    storage_name = "sqlite:///{}.db".format(study_name)
-    study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
-    # for trial in study.trials:
-    #     if trial.datetime_complete and trial.datetime_start:
-    #         duration = trial.datetime_complete - trial.datetime_start
-    #         print(f"Trial {trial.number} took {duration.total_seconds()} seconds")
-    study.optimize(partial(objective, aligned_orientations=True, ang_input=False, ang_connections=False), timeout=3600*2)
-
-    # Get the best hyperparameters
-    best_params = study.best_params
-    print(f"Best hyperparameters: {best_params}")
-
-    study_name = "unicycle_opt_all_classes_not_aligned_no_ang_input_no_ang_connections"
-    storage_name = "sqlite:///{}.db".format(study_name)
-    study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
-    # for trial in study.trials:
-    #     if trial.datetime_complete and trial.datetime_start:
-    #         duration = trial.datetime_complete - trial.datetime_start
-    #         print(f"Trial {trial.number} took {duration.total_seconds()} seconds")
-    study.optimize(partial(objective, aligned_orientations=False, ang_input=False, ang_connections=False), timeout=3600*2)
-
-    # Get the best hyperparameters
-    best_params = study.best_params
-    print(f"Best hyperparameters: {best_params}")
-
-    study_name = "unicycle_opt_all_classes_not_aligned_w_ang_input_no_ang_connections"
-    storage_name = "sqlite:///{}.db".format(study_name)
+    study_name = "alignment_ang_input_ang_connections_as_params_true"
+    database_name = "unicycle_nets_mnist_all_digits"
+    storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
     study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
     # for trial in study.trials:
     #     if trial.datetime_complete and trial.datetime_start:
