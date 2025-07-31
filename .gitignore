@@ -172,3 +172,4 @@ cython_debug/
 
 *.tex
 *.csv
+standard_forcing_plots.py
