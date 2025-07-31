@@ -1,3 +1,4 @@
+import time
 from torch import nn
 import torch
 import numpy as np
@@ -82,7 +83,7 @@ class UnicycleNetwork(nn.Module):
         for i in range(n_units):
             for j in range(i + 1, n_units):
                 self.eq_distances_mat_ang[i, j] = eq_distances_array[idx]
-                self.eq_distances_mat_ang[j,i] = eq_distances_array[idx]
+                self.eq_distances_mat_ang[j,i] = -eq_distances_array[idx]
                 idx += 1
         self.eq_distances_mat_ang = self.eq_distances_mat_ang.reshape(n_units, n_units)
         self.eq_distances_mat_ang = nn.Parameter(self.eq_distances_mat_ang, requires_grad=False)
@@ -197,6 +198,8 @@ class UnicycleReservoir(nn.Module):
             self.ang_input_map = ang_input_map
     
     def forward(self, u_lin, u_ang):
+        #start = time.time()
+
         x = self.x_init
         z = self.z_init
         theta = self.theta_init
@@ -220,7 +223,9 @@ class UnicycleReservoir(nn.Module):
 
             concatenated_states = torch.hstack((x, z, theta, s, omega))
             states_list.append(concatenated_states)
-            
+        #end = time.time()
+        #print("elapsed time dynamics", end - start)
+        #start = time.time()
             # Check for NaN gradients
             # if t == 1:
         if self.n_past_steps_readout > 0:
@@ -229,6 +234,8 @@ class UnicycleReservoir(nn.Module):
             output = self.readout(torch.hstack((mid_states, x, z, theta, s, omega)))
         else:
             output = self.readout(torch.hstack((x, z, theta, s, omega)))
+        #end = time.time()
+        #print("elapsed time readout", end - start)
         return states_list, output
     
     def set_init_states_random(self, bs):
