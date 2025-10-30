@@ -12,6 +12,6 @@ The files called `optuna_<dataset>` were used to run optuna optimizations to fin
 * [Scikit-learn](https://scikit-learn.org/stable/install.html)
 * [Optuna](https://github.com/optuna/optuna)
 * [tqdm](https://github.com/tqdm/tqdm)
-* [matplotlib] (https://matplotlib.org/stable/install/index.html)
+* [matplotlib](https://matplotlib.org/stable/install/index.html)
 
 Note that while some files import jax, those implementations do not currently work.
