@@ -1,7 +1,7 @@
 from scipy.integrate import odeint
 import numpy as np
 import torch
-# from aeon.datasets import load_classification
+from aeon.datasets import load_classification
 import os
 import torch.utils
 import torchvision
@@ -340,20 +340,41 @@ class phys_coESN(nn.Module):
         return torch.stack(all_states, dim=1), [hy]  # list to be compatible with ESN implementation
 
 
-def get_cifar_data(bs_train,bs_test):
-    train_dataset = torchvision.datasets.CIFAR10(root='data/',
+def get_cifar_data(bs_train, bs_test, classes=None, new_fraction=0.5, test_fraction=0.5, path=None):
+    if not path:
+        root = 'data/'
+    else:
+        root = path
+        
+    # Load the CIFAR-10 dataset
+    train_dataset = torchvision.datasets.CIFAR10(root=root,
                                                  train=True,
                                                  transform=transforms.ToTensor(),
                                                  download=True)
 
-    test_dataset = torchvision.datasets.CIFAR10(root='data/',
+    test_dataset = torchvision.datasets.CIFAR10(root=root,
                                                 train=False,
                                                 transform=transforms.ToTensor())
+    
+    # Filter the dataset to only include the specified classes
+    if classes is not None:
+        train_indices = [i for i, label in enumerate(train_dataset.targets) if label in classes]
+        test_indices = [i for i, label in enumerate(test_dataset.targets) if label in classes]
+        
+        train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+        test_dataset = torch.utils.data.Subset(test_dataset, test_indices)
 
-    train_dataset, valid_dataset = torch.utils.data.random_split(train_dataset, [47000,3000])
+    # Split the training data into train and validation sets with fraction control
+    total_size = int(new_fraction * len(train_dataset))
+    used_dataset, _ = torch.utils.data.random_split(train_dataset, [total_size, len(train_dataset)-total_size])
+    train_size = int(0.94 * len(used_dataset))  # Using 94% for train, 6% for validation (like original 47000/3000)
+    valid_size = len(used_dataset) - train_size
+    test_size = int(test_fraction * len(test_dataset))
+    train_dataset_reduced, valid_dataset = torch.utils.data.random_split(used_dataset, [train_size, valid_size])
+    test_dataset, _ = torch.utils.data.random_split(test_dataset, [test_size, len(test_dataset)-test_size])
 
-    # Data loader
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
+    # Data loaders
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset_reduced,
                                                batch_size=bs_train,
                                                shuffle=True,
                                                drop_last=True)
@@ -400,7 +421,7 @@ def get_fordb_data(train_batch_size, test_batch_size):
 
 
 def get_uwavegesture_data(train_batch_size, test_batch_size):
-    X, y, meta_data = load_classification("UWaveGestureLibraryAll", split='train')
+    X, y, meta_data = load_classification("UWaveGestureLibraryAll", split='train', return_metadata=True)
     class_labels = meta_data['class_values']  # 'dws', 'ups', 'sit', 'std', 'wlk', 'jog'
     class_to_label = {v: i for i, v in enumerate(class_labels)}
 
@@ -408,7 +429,7 @@ def get_uwavegesture_data(train_batch_size, test_batch_size):
 
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, stratify=y)
 
-    test_X, test_y, meta_data = load_classification("UWaveGestureLibraryAll", split='test')
+    test_X, test_y, meta_data = load_classification("UWaveGestureLibraryAll", split='test', return_metadata=True)
     X_train = torch.from_numpy(X_train).float().permute(0, 2, 1).contiguous()
     X_val = torch.from_numpy(X_val).float().permute(0, 2, 1).contiguous()
     test_X = torch.from_numpy(test_X).float().permute(0, 2, 1).contiguous()
@@ -420,9 +441,9 @@ def get_uwavegesture_data(train_batch_size, test_batch_size):
     validation_dataset = torch.utils.data.TensorDataset(X_val, y_val)
     test_dataset = torch.utils.data.TensorDataset(test_X, test_y)
 
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, drop_last=False)
-    validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=test_batch_size, shuffle=False, drop_last=False)
-    test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, drop_last=False)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, drop_last=True)
+    validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=test_batch_size, shuffle=False, drop_last=True)
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, drop_last=True)
 
     return train_dataloader, validation_dataloader, test_dataloader
 
