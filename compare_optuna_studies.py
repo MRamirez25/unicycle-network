@@ -7,17 +7,40 @@ import optuna
 import pandas as pd
 import os
 
-# Define the study names
-study_names = [
-    "unicycle_opt_all_classes_aligned_no_ang_input_no_ang_connections",
-    "unicycle_opt_all_classes_not_aligned_no_ang_input_no_ang_connections",
-    "unicycle_opt_all_classes_not_aligned_w_ang_input_no_ang_connections"
-]
+# Configuration for different comparison scenarios
+# Scenario 1: Multiple databases, same study name
+SCENARIO_1_CONFIG = {
+    "db_names": [
+        "unicycle_nets_mnist_all_digits_logreg",
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned",
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned_w_input_w_connections"
+    ],
+    "study_name": "alignment_ang_input_ang_connections_as_params_true",
+    "mode": "multiple_dbs_one_study"
+}
 
-def load_study_best_params(study_name, base_dir="."):
-    """Load the best parameters from an Optuna study."""
+# Scenario 2: One database, multiple studies
+SCENARIO_2_CONFIG = {
+    "db_name": "unicycle_nets_lorenz",  # Replace with your actual database name
+    "study_names": [
+          # Replace with your actual study names
+        "lorenz_prediction_esn_lag25"
+    ],
+    "mode": "one_db_multiple_studies"
+}
+
+# Choose which scenario to use (1 or 2)
+ACTIVE_SCENARIO = 2
+
+# Set active configuration based on scenario
+if ACTIVE_SCENARIO == 1:
+    config = SCENARIO_1_CONFIG
+else:
+    config = SCENARIO_2_CONFIG
+def load_study_best_params_single(db_name, study_name, base_dir="."):
+    """Load the best parameters from an Optuna study (single database, single study)."""
     try:
-        storage_name = f"sqlite:///{base_dir}/optuna_databases/{study_name}.db"
+        storage_name = f"sqlite:///{base_dir}/optuna_databases/{db_name}.db"
         study = optuna.load_study(storage=storage_name, study_name=study_name)
         
         # Get best trial info
@@ -28,18 +51,44 @@ def load_study_best_params(study_name, base_dir="."):
         
         return best_params
     except Exception as e:
-        print(f"Error loading study {study_name}: {e}")
+        print(f"Error loading study {study_name} from {db_name}: {e}")
         return None
 
-def compare_studies(study_names, base_dir="."):
-    """Compare hyperparameters across multiple studies."""
+def compare_studies_multiple_dbs(db_names, study_name, base_dir="."):
+    """Compare hyperparameters across multiple databases with the same study name."""
+    
+    # Load all studies
+    studies_data = {}
+    for db_name in db_names:
+        params = load_study_best_params_single(db_name, study_name, base_dir)
+        if params is not None:
+            studies_data[db_name] = params  # Use db_name as key
+        else:
+            print(f"Skipping study: {db_name}")
+    
+    if not studies_data:
+        print("No studies could be loaded!")
+        return None
+    
+    # Convert to DataFrame for easy comparison
+    df = pd.DataFrame(studies_data).T
+    
+    # Reorder columns to put important metrics first
+    important_cols = ['best_value', 'n_trials']
+    param_cols = [col for col in df.columns if col not in important_cols]
+    df = df[important_cols + sorted(param_cols)]
+    
+    return df
+
+def compare_studies_one_db(db_name, study_names, base_dir="."):
+    """Compare hyperparameters across multiple studies in the same database."""
     
     # Load all studies
     studies_data = {}
     for study_name in study_names:
-        params = load_study_best_params(study_name, base_dir)
+        params = load_study_best_params_single(db_name, study_name, base_dir)
         if params is not None:
-            studies_data[study_name] = params
+            studies_data[study_name] = params  # Use study_name as key
         else:
             print(f"Skipping study: {study_name}")
     
@@ -105,11 +154,21 @@ def generate_latex_table(df, filename="optuna_studies_comparison.tex"):
     latex_df.columns = [col.replace('_', '\\_') for col in latex_df.columns]
     
     # Shorten study names for better LaTeX formatting
-    latex_df.index = [
-        "Aligned (no ang)",
-        "Not aligned (no ang)", 
-        "Not aligned (w/ ang)"
-    ]
+    study_name_mapping = {
+        "unicycle_nets_mnist_all_digits_logreg": "Aligned (no ang)",
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned": "Not aligned (no ang)", 
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned_w_input_w_connections": "Not aligned (w/ ang)"
+    }
+    
+    # Only map the studies that actually exist in the DataFrame
+    new_index = []
+    for original_name in latex_df.index:
+        if original_name in study_name_mapping:
+            new_index.append(study_name_mapping[original_name])
+        else:
+            new_index.append(original_name)
+    
+    latex_df.index = new_index
     
     # Create LaTeX table
     latex_content = []
@@ -201,7 +260,7 @@ def generate_latex_table(df, filename="optuna_studies_comparison.tex"):
         print(f"Simplified LaTeX table saved to: {simple_filename}")
     
     # Create custom table with specific parameters and calculated parameter count
-    custom_params = ['best\\_value', 'n\\_units', 'n\\_connections', 'non\\_zero\\_elements', 'non\\_zero\\_elements\\_ang', 'steps\\_readout']
+    custom_params = ['best\\_value', 'n\\_units', 'n\\_connections', 'non\\_zero\\_fraction', 'non\\_zero\\_fraction\\_ang', 'steps\\_readout']
     
     # Get the original dataframe (before escaping) to do calculations
     orig_df = df.copy()
@@ -214,9 +273,9 @@ def generate_latex_table(df, filename="optuna_studies_comparison.tex"):
     custom_df = pd.DataFrame()
     custom_df['best\\_value'] = orig_df['best_value']
     custom_df['n\\_units'] = orig_df['n_units']
-    custom_df['n\\_connections'] = orig_df['n_connections']
-    custom_df['non\\_zero\\_elements'] = orig_df['non_zero_elements']
-    custom_df['non\\_zero\\_elements\\_ang'] = orig_df['non_zero_elements_ang']
+    custom_df['n\\_connections'] = orig_df['n_connections_fraction']
+    custom_df['non\\_zero\\_fraction'] = orig_df['non_zero_fraction']
+    custom_df['non\\_zero\\_fraction\\_ang'] = orig_df['non_zero_fraction_ang']
     custom_df['steps\\_readout'] = orig_df['steps_readout']
     custom_df['param\\_count'] = orig_df['param_count']
     
@@ -225,15 +284,25 @@ def generate_latex_table(df, filename="optuna_studies_comparison.tex"):
         if custom_df[col].dtype in ['float64', 'int64']:
             custom_df[col] = custom_df[col].round(0).astype(int)
             # Replace 0s that were originally NaN with --
-            if col in ['non\\_zero\\_elements\\_ang']:
-                custom_df.loc[orig_df['non_zero_elements_ang'].isna(), col] = '--'
+            if col in ['non\\_zero\\_fraction\\_ang']:
+                custom_df.loc[orig_df['non_zero_fraction_ang'].isna(), col] = '--'
     
     # Set the same row names as before
-    custom_df.index = [
-        "Aligned (no ang)",
-        "Not aligned (no ang)", 
-        "Not aligned (w/ ang)"
-    ]
+    study_name_mapping = {
+        "unicycle_nets_mnist_all_digits_logreg": "Aligned (no ang)",
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned": "Not aligned (no ang)", 
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned_w_input_w_connections": "Not aligned (w/ ang)"
+    }
+    
+    # Only map the studies that actually exist in the DataFrame
+    new_index = []
+    for original_name in custom_df.index:
+        if original_name in study_name_mapping:
+            new_index.append(study_name_mapping[original_name])
+        else:
+            new_index.append(original_name)
+    
+    custom_df.index = new_index
     
     # Create custom LaTeX table
     custom_latex = []
@@ -278,7 +347,7 @@ def generate_custom_latex_table(df, filename="optuna_studies_comparison_custom.t
     """Generate a custom LaTeX table with specific parameters and calculated parameter count (transposed)."""
     
     # Select specific columns
-    custom_params = ['best_value', 'n_units', 'n_connections', 'non_zero_elements', 'non_zero_elements_ang', 'steps_readout']
+    custom_params = ['best_value', 'n_units', 'n_connections_fraction', 'non_zero_fraction', 'non_zero_fraction_ang', 'steps_readout']
     available_params = [param for param in custom_params if param in df.columns]
     
     if len(available_params) < 3:
@@ -290,33 +359,58 @@ def generate_custom_latex_table(df, filename="optuna_studies_comparison_custom.t
     # Calculate parameter count: n_units * 5 * 10 * steps_readout
     custom_df['param_count'] = (custom_df['n_units'] * 5 * 10 * custom_df['steps_readout']).astype(int)
     
-    # Round and format values
-    custom_df['best_value'] = custom_df['best_value'].round(0).astype(int)
+    # Store original NaN mask for non_zero_fraction_ang before any conversions
+    ang_nan_mask = custom_df['non_zero_fraction_ang'].isna() if 'non_zero_fraction_ang' in custom_df.columns else pd.Series([False] * len(custom_df))
+    
+    # Round and format values, but preserve NaN for proper handling
+    # Convert best_value to percentage (multiply by 100) and round to 1 decimal place
+    custom_df['best_value'] = (custom_df['best_value'] * 100).round(1)
     custom_df['n_units'] = custom_df['n_units'].astype(int)
-    custom_df['n_connections'] = custom_df['n_connections'].astype(int)
-    custom_df['non_zero_elements'] = custom_df['non_zero_elements'].astype(int)
+    if 'n_connections_fraction' in custom_df.columns:
+        custom_df['n_connections_fraction'] = custom_df['n_connections_fraction'].astype(float)
+    custom_df['non_zero_fraction'] = custom_df['non_zero_fraction'].astype(int)
     custom_df['steps_readout'] = custom_df['steps_readout'].astype(int)
     
-    # Handle NaN values in non_zero_elements_ang
-    custom_df['non_zero_elements_ang'] = custom_df['non_zero_elements_ang'].fillna(0).astype(int)
+    # Handle NaN values in non_zero_fraction_ang properly
+    if 'non_zero_fraction_ang' in custom_df.columns:
+        # Fill NaN with a placeholder value first, then convert to int, then replace placeholder with '--'
+        custom_df['non_zero_fraction_ang'] = custom_df['non_zero_fraction_ang'].fillna(-999).astype(int)
     
     # Shorten study names for columns
-    custom_df.index = [
-        "Aligned (no ang)",
-        "Not aligned (no ang)", 
-        "Not aligned (w/ ang)"
-    ]
+    study_name_mapping = {
+        "unicycle_nets_mnist_all_digits_logreg": "Aligned (no ang)",
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned": "Not aligned (no ang)", 
+        "unicycle_nets_mnist_all_digits_logreg_not_aligned_w_input_w_connections": "Not aligned (w/ ang)"
+    }
+    
+    # Only map the studies that actually exist in the DataFrame
+    new_index = []
+    for original_name in custom_df.index:
+        if original_name in study_name_mapping:
+            new_index.append(study_name_mapping[original_name])
+        else:
+            new_index.append(original_name)
+    
+    custom_df.index = new_index
+    
+    # Add a baseline/comparison column with N/A values 
+    # We'll add this after transposing to avoid data type conflicts
+    baseline_column_data = ['N/A'] * len(custom_df)
     
     # Transpose the dataframe so parameters are rows
     transposed_df = custom_df.T
+    
+    # Add baseline column after transposing to avoid data type issues
+    baseline_data = ['N/A'] * len(transposed_df)
+    transposed_df['Baseline/Other'] = baseline_data
     
     # Create parameter labels for rows
     param_labels = {
         'best_value': 'Best Accuracy (\\%)',
         'n_units': 'Number of Units',
-        'n_connections': 'Connections', 
-        'non_zero_elements': 'Non-zero Elements',
-        'non_zero_elements_ang': 'Non-zero Angular Elements',
+        'n_connections_fraction': 'Connection Fraction', 
+        'non_zero_fraction': 'Non-zero Fraction',
+        'non_zero_fraction_ang': 'Non-zero Angular Fraction',
         'steps_readout': 'Readout Steps',
         'param_count': 'Parameter Count'
     }
@@ -342,7 +436,28 @@ def generate_custom_latex_table(df, filename="optuna_studies_comparison_custom.t
     # Data rows (each parameter)
     for param_name, row in transposed_df.iterrows():
         param_label = param_labels.get(param_name, param_name.replace('_', '\\_'))
-        row_values = [str(int(val)) if isinstance(val, (int, float)) else str(val) for val in row.values]
+        row_values = []
+        for col_name, val in zip(transposed_df.columns, row.values):
+            if col_name == 'Baseline/Other':
+                # Always show N/A for baseline column except for best_value and param_count
+                if param_name in ['best_value', 'param_count']:
+                    row_values.append('N/A')
+                else:
+                    row_values.append('N/A')
+            elif param_name == 'non_zero_fraction_ang' and val == -999:
+                # Replace placeholder with --
+                row_values.append('--')
+            elif param_name == 'best_value':
+                # Format as percentage with 1 decimal place
+                row_values.append(f"{val:.1f}" if isinstance(val, (int, float)) else str(val))
+            elif param_name == 'n_connections_fraction':
+                # Format as float with proper precision
+                row_values.append(f"{val:.3f}" if isinstance(val, (int, float)) else str(val))
+            elif isinstance(val, (int, float)) and val != -999:
+                # Format as integer for most parameters
+                row_values.append(str(int(val)))
+            else:
+                row_values.append(str(val))
         row_str = f"\\textbf{{{param_label}}} & " + " & ".join(row_values) + " \\\\"
         latex_content.append(row_str)
     
@@ -364,20 +479,30 @@ if __name__ == "__main__":
     
     print("Loading Optuna studies...")
     print(f"Looking for databases in: {current_dir}/optuna_databases/")
+    print(f"Using scenario {ACTIVE_SCENARIO}: {config['mode']}")
     
-    # Compare the studies
-    comparison_df = compare_studies(study_names, current_dir)
+    # Compare the studies based on the active scenario
+    if config['mode'] == 'multiple_dbs_one_study':
+        comparison_df = compare_studies_multiple_dbs(config['db_names'], config['study_name'], current_dir)
+        scenario_name = "multiple_databases"
+    else:  # one_db_multiple_studies
+        comparison_df = compare_studies_one_db(config['db_name'], config['study_names'], current_dir)
+        scenario_name = "multiple_studies"
     
     if comparison_df is not None:
         # Print the comparison
         print_comparison_table(comparison_df)
         
-        # Save to CSV
-        save_comparison_to_csv(comparison_df, "optuna_studies_comparison.csv")
+        # Save to CSV with scenario-specific filename
+        csv_filename = f"optuna_studies_comparison_{scenario_name}.csv"
+        save_comparison_to_csv(comparison_df, csv_filename)
         
-        # Generate LaTeX tables
-        generate_latex_table(comparison_df, "optuna_studies_comparison.tex")
-        generate_custom_latex_table(comparison_df, "optuna_studies_comparison_custom.tex")
+        # Generate LaTeX tables with scenario-specific filenames
+        tex_filename = f"optuna_studies_comparison_{scenario_name}.tex"
+        custom_tex_filename = f"optuna_studies_comparison_{scenario_name}_custom.tex"
+        
+        generate_latex_table(comparison_df, tex_filename)
+        generate_custom_latex_table(comparison_df, custom_tex_filename)
         
         # Additional analysis
         print("\n" + "=" * 100)
