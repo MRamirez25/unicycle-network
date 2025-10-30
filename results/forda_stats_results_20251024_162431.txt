@@ -1,0 +1,23 @@
+FordA Evaluation Statistics - only_last_state_as_readout_20_units_not_aligned_less_ang_magnitude_no_tanh
+Generated on: 2025-10-24 16:24:31
+============================================================
+
+Configuration:
+  - Network units: 20
+  - Classes: 2
+  - Aligned orientations: False
+  - Angular input: True
+  - Angular connections: False
+
+Results Summary:
+  - Validation accuracy: 0.8232 ± 0.0323
+  - Test accuracy: 0.8228 ± 0.0324
+  - Correlation: 0.8990
+  - Successful runs: 5/5
+
+Individual Results:
+  Seed   33: Valid=0.8525, Test=0.8600
+  Seed   42: Valid=0.7917, Test=0.7908
+  Seed  123: Valid=0.8667, Test=0.8642
+  Seed  456: Valid=0.8200, Test=0.7950
+  Seed  789: Valid=0.7850, Test=0.8042
