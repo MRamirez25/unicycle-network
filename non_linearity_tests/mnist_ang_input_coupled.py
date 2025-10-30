@@ -8,8 +8,12 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 #%%
-from utils import get_mnist_data
+from utils import get_mnist_data, n_params
 from tqdm import tqdm
+
+# Fix matplotlib backend issues - use non-interactive backend
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from unicycle_network_class import UnicycleNetwork, UnicycleReservoir
 from torch import nn, optim
@@ -17,21 +21,23 @@ import torch
 import optuna
 from matplotlib.animation import FuncAnimation
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn import preprocessing
 import random
 #%%
 
 # %%
-storage_name = f"unicycle_nets_mnist_all_digits"
-study_name = "not_aligned_w_ang_input_w_ang_connections"
+storage_name = f"unicycle_mnist_all_digits_logreg"
+study_name = "not_aligned_w_input_w_connections_actual_100_units_last_readout_no_tanh"
 storage_name = f"sqlite:///{parent_dir}/optuna_databases/{storage_name}.db"
 study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
 params = study.best_params
 #%%
 aligned_orientations = False  # Set to True if you want aligned orientations, False otherwise
 ang_input = True  # Set to True if you want angular input, False otherwise
+ang_connections = True  # Set to True if you want angular connections, False otherwise
 #%%
-n_units = params['n_units']
-lr = params['lr']
+n_units = 100
 lin_stiff_min =  params['lin_stiff_min']
 lin_stiff_max =  params['lin_stiff_max']
 ang_stiff_min =  params['ang_stiff_min']
@@ -40,7 +46,7 @@ lin_damping_min =  params['lin_damping_min']
 lin_damping_max =  params['lin_damping_max']
 ang_damping_min =  params['ang_damping_min']
 ang_damping_max  = params['ang_damping_max']
-bs_train = params['batch_size']
+bs_train = 500
 bs_test = bs_train
 dt = params['dt']
 inp_bias =  params['inp_bias']
@@ -49,18 +55,16 @@ num_non_zero = params['non_zero_elements']
 magnitude_min = params['magnitude_min']
 magnitude_max = params['magnitude_max']
 non_zero_elements_ang = params['non_zero_elements_ang']
-magnitude_min_ang = -params['magnitude_max_ang']
+magnitude_min_ang = params['magnitude_min_ang']
 magnitude_max_ang = params['magnitude_max_ang']
 n_connections_fraction = params['n_connections_fraction']
 n_connections = int(n_units*n_connections_fraction)
 washup = params['washup_steps']
-n_steps_readout = params['steps_readout']
 anchor_con_fraction_ang = params['anchor_con_fraction_ang']
 eq_dist_min = params['eq_dist_min']
 eq_dist_max = params['eq_dist_max']
 eq_dist_min_ang = params['eq_dist_min_ang']
 eq_dist_max_ang = params['eq_dist_max_ang']
-n_epochs = params['n_epochs']
 n_connections_anchor = int(n_units * anchor_con_fraction)
 n_connections_ang_fraction = params["n_connections_ang_fraction"]
 n_connections_ang = int(n_connections_ang_fraction*n_units)
@@ -82,7 +86,7 @@ torch.backends.cudnn.benchmark = False
 root = parent_dir + '/data/'
 # Load the MNIST dataset
 train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=[0,1,2,3,4,5,6,7,8,9], 
-                                                         new_fraction=0.5, test_fraction=0.5, path=root)
+                                                         new_fraction=1.0, test_fraction=1.0, path=root)
 #%%
 lin_input_map = torch.zeros(1, n_units)
 num_non_zero = num_non_zero
@@ -105,46 +109,35 @@ model = UnicycleReservoir(n_inp=1, n_units=n_units, dt=dt, n_out=10, lin_input_m
                           eq_dist_min=eq_dist_min, eq_dist_max=eq_dist_max, eq_dist_min_ang=eq_dist_min_ang,
                           eq_dist_max_ang=eq_dist_max_ang,  
                           n_connections=n_connections, n_connections_anchor=n_connections_anchor, 
-                          n_past_steps_readout=n_steps_readout, n_connections_ang=n_connections_ang, n_connections_anchor_ang=n_connections_anchor_ang,
+                          n_past_steps_readout=0, n_connections_ang=n_connections_ang, n_connections_anchor_ang=n_connections_anchor_ang,
                           ang_stiff_min=ang_stiff_min, ang_stiff_max=ang_stiff_max, ang_damping_min=ang_damping_min, ang_damping_max=ang_damping_max,
                           inp_bias=inp_bias, ang_input_map=ang_input_map)
 #%%
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")  # Force CPU for testing purposes
+# device = torch.device("cpu")  # Force CPU for testing purposes
 print("Using", device)
 model = model.to(device)
 #%%
-def test(data_loader):
-    model.eval()
-    correct = 0
-    test_loss = 0
-    with torch.no_grad():
-        for i, (images, labels) in enumerate(data_loader):
-            # images, labels = images.to(device), labels.to(device)
-            images = images.reshape(bs_test, 1, 784)
-            images = images.permute(0, 2, 1)
-            angular_input = torch.zeros_like(images)
-
-            images = images.to(device)
-            # images = images[:, perm, :]
-            angular_input = angular_input.to(device)
-            labels = labels.to(device)
-            zeros = torch.zeros_like(images).to(device)
-            _, output = model(images, images)
-            test_loss += objective(output, labels).item()
-            pred = output.data.max(1, keepdim=True)[1]
-            correct += pred.eq(labels.data.view_as(pred)).sum()
-    test_loss /= i+1
-    accuracy = 100. * correct / len(data_loader.dataset)
-
-    return accuracy.item()
+@torch.no_grad()
+def test_esn(data_loader, model, classifier, scaler):
+    activations, ys = [], []
+    for images, labels in tqdm(data_loader):
+        images = images.reshape(images.shape[0], 1, 784)
+        images = images.permute(0, 2, 1)
+        images = images.to(device)
+        labels = labels.to(device)
+        states_list, output, mid_states = model(images, images)
+        mid_states = mid_states[:, :n_units*2]
+        activations.append(mid_states.cpu())
+        ys.append(labels.cpu())
+    activations = torch.cat(activations, dim=0).numpy()
+    activations = scaler.transform(activations)
+    ys = torch.cat(ys, dim=0).numpy()
+    return classifier.score(activations, ys)
 #%%
 for i, (images, labels) in enumerate(test_loader):
-    images = images.reshape(bs_test, 1, 784)
-#%%
-n_epochs = n_epochs
-objective = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=lr)
+    print(f"MNIST data shape: {images.shape}, labels shape: {labels.shape}")
+    break
 #%%
 # # %%
 # for parameter in model.parameters():
@@ -178,7 +171,7 @@ s = model.s_init[0:1,:]
 omega = model.omega_init[0:1,:]
 states_list = []
 #%%
-u_lin = torch.zeros((1, 1, 1), device=device)
+u_lin = torch.zeros((1, washup, 1), device=device)
 u_ang = torch.zeros_like(u_lin, device=device)
 
 for t in range(u_lin.size()[1]):
@@ -186,9 +179,6 @@ for t in range(u_lin.size()[1]):
     angular_input = u_ang[:, t] @ model.ang_input_map
 
     x, z, theta, s, omega = model.unicycle_network(linear_input, angular_input, x, z, theta, s, omega)
-
-    concatenated_states = torch.hstack((x, z, theta, s, omega))
-    states_list.append(concatenated_states)
 #%%
 all_states_time = torch.vstack(states_list)
 plt.plot(all_states_time[:,0:n_units].cpu().detach().numpy())
@@ -199,53 +189,44 @@ plt.plot(all_states_time[:,n_units*4:n_units*5].cpu().detach().numpy())
 plt.show()
 #%%
 model.set_init_states(bs_train, x,z,theta,s,omega)
-perm = torch.randperm(784).to(device)
 
-#%%
-for epoch in range(n_epochs):
-    model.train()
-    progress_bar = tqdm(train_loader)
-    for images, labels in progress_bar:
-        images = images.reshape(images.shape[0], 1, 784)
-        images = images.permute(0,2,1)
-        angular_input = torch.zeros_like(images)
+# Logistic regression ESN training loop
+progress_bar = tqdm(train_loader)
+activations, ys = [], []
+for images, labels in progress_bar:
+    images = images.reshape(images.shape[0], 1, 784)
+    images = images.permute(0, 2, 1)
+    images = images.to(device)
+    labels = labels.to(device)
+    # model should return mid_states as third output
+    states_list, output, mid_states = model(images, images)
+    mid_states = mid_states[:, :n_units*2]
+    activations.append(mid_states.detach().cpu())
+    ys.append(labels.cpu())
 
-        images = images.to(device)
-        # images = images[:, perm, :]
-        angular_input = angular_input.to(device)
-        labels = labels.to(device)
+activations = torch.cat(activations, dim=0).numpy()
+ys = torch.cat(ys, dim=0).numpy()
 
-        optimizer.zero_grad()
-        # with torch.no_grad():
-        zeros = torch.zeros_like(images).to(device)
-        states_list, output = model(images, images)
-        start = time.time()
-        loss = objective(output, labels)
-        loss.backward()
-        # Check gradients
-        # if epoch % 10 == 0:
-        #     for name, param in model.named_parameters():
-        #         if param.grad is not None:
-        #             print(f"Gradient of {name}:")
-        #             print(param.grad)
-        #         else:
-        #             print(f"No gradient computed for {name}")
-        optimizer.step()
-        end = time.time()
-        print("elapsed time update", end - start)
-        progress_bar.set_postfix(loss=loss.item())
-    valid_score = test(valid_loader)
-    test_score = test(test_loader)
-    print(f"Validation score: {valid_score}")
-    print(f"Test score: {test_score}")
-    # print(model.lin_input_map)
+# Check for NaN values in activations
+if np.isnan(activations).any():
+    print("NaN values detected in activations")
+else:
+    print("No NaN values detected, proceeding with training")
+
+scaler = preprocessing.StandardScaler().fit(activations)
+activations = scaler.transform(activations)
+classifier = LogisticRegression(max_iter=1000).fit(activations, ys)
+
+# Validation and test scores using ESN
+valid_score = test_esn(valid_loader, model, classifier, scaler)
+test_score = test_esn(test_loader, model, classifier, scaler)
+print(f"Validation score (ESN): {valid_score}")
+print(f"Test score (ESN): {test_score}")
 # %%
-valid_score = test(valid_loader)
-test_score = test(test_loader)
-print(f"Validation score: {valid_score}")
-print(f"Test score: {test_score}")
+# Final validation and test scores
+print(f"Number of trainable parameters: {n_params(classifier)}")
 #%%
-sample_idx = 10
+sample_idx = 0
 print(labels[sample_idx])
 #%%
 all_states_time_res = torch.stack(states_list, dim=1)
