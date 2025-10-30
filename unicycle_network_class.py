@@ -208,7 +208,8 @@ class UnicycleReservoir(nn.Module):
         states_list = []
 
         for t in range(u_lin.size()[1]):
-            linear_input = torch.tanh(u_lin[:, t] +self.inp_bias) @ self.lin_input_map
+            # linear_input = torch.tanh(u_lin[:, t] +self.inp_bias) @ self.lin_input_map
+            linear_input = (u_lin[:, t] +self.inp_bias) @ self.lin_input_map
             angular_input = (u_ang[:, t]) @ self.ang_input_map
             # print(self.lin_input_map)
 
@@ -231,12 +232,14 @@ class UnicycleReservoir(nn.Module):
         if self.n_past_steps_readout > 0:
             mid_states_idxs = [(int(u_lin.size()[1] / self.n_past_steps_readout) - 1)*k for k in range(1,self.n_past_steps_readout+1)]
             mid_states = torch.hstack(([states_list[idx] for idx in mid_states_idxs]))
-            output = self.readout(torch.hstack((mid_states, x, z, theta, s, omega)))
+            # output = self.readout(torch.hstack((mid_states, x, z, theta, s, omega)))
         else:
-            output = self.readout(torch.hstack((x, z, theta, s, omega)))
+            # output = self.readout(torch.hstack((x, z, theta, s, omega)))
+            mid_states = states_list[-1]
+        output = None
         #end = time.time()
         #print("elapsed time readout", end - start)
-        return states_list, output
+        return states_list, output, mid_states
     
     def set_init_states_random(self, bs):
         self.x_init = torch.randn(self.n_units).repeat(bs,1)
