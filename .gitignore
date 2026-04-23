@@ -173,3 +173,29 @@ cython_debug/
 *.tex
 *.csv
 standard_forcing_plots.py
+
+# images, plots, videos
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+*.mp4
+*.mkv
+*.gif
+
+# databases, statistics
+*.db
+*.txt
+
+# logs, config
+*.gz
+*.csv
+*.pkl
+*.zip
+*.json
+*.yml
+
+# downloaded data
+*/data/*
+data/*
