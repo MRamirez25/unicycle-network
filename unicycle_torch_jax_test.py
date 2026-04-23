@@ -3,9 +3,9 @@ import torch
 from torch import nn, optim
 from tqdm import tqdm
 import optuna
-from unicycle_jax_classv2 import UnicycleModel
+from unicycle_network_jax import UnicycleModel
 from utils import get_mnist_data
-from unicycle_jax_classv2 import ReadoutLayer
+from unicycle_network_jax import ReadoutLayer
 import jax
 import jax.numpy as jnp
 import numpy as np
