@@ -3,7 +3,7 @@ import numpy as np
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 import torch
-from unicycle_network_class import UnicycleNetwork
+from unicycle_network import UnicycleNetwork
 import torch
 #%%
 # Given constants

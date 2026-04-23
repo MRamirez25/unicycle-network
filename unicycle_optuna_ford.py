@@ -2,7 +2,7 @@ import torch
 from torch import nn, optim
 from tqdm import tqdm
 import optuna
-from unicycle_network_class import UnicycleReservoir
+from unicycle_network import UnicycleReservoir
 from utils import get_mnist_data, get_FordA_data
 import time
 

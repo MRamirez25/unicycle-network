@@ -15,7 +15,7 @@ from tqdm import tqdm
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
-from unicycle_network_class import UnicycleNetwork, UnicycleReservoir
+from unicycle_network import UnicycleNetwork, UnicycleReservoir
 from torch import nn, optim
 import torch
 import optuna

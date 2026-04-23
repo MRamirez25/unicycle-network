@@ -3,7 +3,7 @@ import numpy as np
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 import torch
-from unicycle_network_class import UnicycleNetwork
+from unicycle_network import UnicycleNetwork
 import torch
 from equilibrium_simple_case import solve_mass_spring_system, plot_mass_spring_system
 #%%

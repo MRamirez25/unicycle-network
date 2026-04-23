@@ -11,7 +11,7 @@ if parent_dir not in sys.path:
 from utils import get_FordA_data, n_params
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from unicycle_network_class import UnicycleNetwork, UnicycleReservoir
+from unicycle_network import UnicycleNetwork, UnicycleReservoir
 
 from torch import nn, optim
 import torch

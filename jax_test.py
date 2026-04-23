@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, jit, vmap
 import time, timeit
-from unicycle_network_class import UnicycleNetwork, UnicycleReservoir
+from unicycle_network import UnicycleNetwork, UnicycleReservoir
 from unicycle_network_vmap import batched_forward
 import torch
 import numpy as np
