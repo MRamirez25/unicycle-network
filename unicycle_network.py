@@ -121,10 +121,10 @@ class UnicycleNetwork(nn.Module):
         x = x + torch.cos(theta) * s * self.dt
         z = z + torch.sin(theta) * s * self.dt
         
-        # Add Gaussian noise to positions if enabled
-        if self.position_noise_std > 0:
-            x = x + torch.randn_like(x) * self.position_noise_std
-            z = z + torch.randn_like(z) * self.position_noise_std
+        # # Add Gaussian noise to positions if enabled
+        # if self.position_noise_std > 0:
+        #     x = x + torch.randn_like(x) * self.position_noise_std
+        #     z = z + torch.randn_like(z) * self.position_noise_std
 
         return x, z, theta, s, omega
     
