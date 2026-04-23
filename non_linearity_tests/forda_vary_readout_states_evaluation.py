@@ -35,7 +35,7 @@ if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
 from utils import get_FordA_data, n_params, count_classifier_params
-from unicycle_network_class import UnicycleReservoir
+from unicycle_network import UnicycleReservoir
 
 #%%
 # ============================================================
