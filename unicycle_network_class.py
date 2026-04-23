@@ -169,6 +169,36 @@ class UnicycleNetwork(nn.Module):
     
         # Stack cos and sin to create the unit vector (b, n_units, 2)
         return torch.stack((cos_angle, sin_angle), dim=-1)
+    
+    def set_eq_distances_from_positions(self, x, z):
+        """
+        Set equilibrium distances based on actual distances between connected robots.
+        Only updates springs that have non-zero stiffness (i.e., actual connections).
+        
+        Args:
+            x: numpy array or torch tensor of x positions, shape (n_units,)
+            z: numpy array or torch tensor of z positions, shape (n_units,)
+        """
+        # Convert to torch tensors if needed
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float32)
+        if isinstance(z, np.ndarray):
+            z = torch.tensor(z, dtype=torch.float32)
+        
+        # Compute pairwise distances
+        n_units = len(x)
+        for i in range(n_units):
+            for j in range(i + 1, n_units):
+                # Only update if there's actually a connection (non-zero stiffness)
+                if self.stiffness_coupling_matrix[i, j] > 0:
+                    # Calculate Euclidean distance
+                    dist = torch.sqrt((x[i] - x[j])**2 + (z[i] - z[j])**2)
+                    # Update equilibrium distance for this connection
+                    self.eq_distances_matrix.data[i, j, 0] = dist
+                    self.eq_distances_matrix.data[j, i, 0] = dist
+        
+        print(f"Updated equilibrium distances based on initial positions")
+        print(f"  Distance range: [{self.eq_distances_matrix.data.min():.4f}, {self.eq_distances_matrix.data.max():.4f}]")
 
 class UnicycleReservoir(nn.Module):
     def __init__(self, n_inp, n_units, dt, n_out, lin_stiff_min=0.1, lin_stiff_max=0.5, 
@@ -290,3 +320,19 @@ class UnicycleReservoir(nn.Module):
         self.theta_init = torch.tensor(theta).repeat(bs,1)
         self.s_init = torch.tensor(s).repeat(bs,1)
         self.omega_init = torch.tensor(omega).repeat(bs,1)
+    
+    def set_eq_distances_from_initial_positions(self):
+        """
+        Set equilibrium distances based on the current initial positions.
+        Must be called after set_init_states() or similar initialization.
+        """
+        if not hasattr(self, 'x_init') or not hasattr(self, 'z_init'):
+            raise ValueError("Initial states not set. Call set_init_states() first.")
+        
+        # Extract first batch (all batches should have same initial positions)
+        x = self.x_init[0].detach().cpu()
+        z = self.z_init[0].detach().cpu()
+        
+        # Set equilibrium distances in the underlying network
+        self.unicycle_network.set_eq_distances_from_positions(x, z)
+
