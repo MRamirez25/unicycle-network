@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 import optax
-from unicycle_network_jax_class import UnicycleModel
+from unicycle_network_jax import UnicycleModel
 
 # Define the objective function for Optuna
 def objective(trial):
