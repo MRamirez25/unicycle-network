@@ -23,70 +23,21 @@ class UnicycleNetwork(nn.Module):
         self.j_vector = torch.ones(1, n_units, requires_grad=False)
         self.j_vector[0,0] = 0.
 
-
-        stiffnesses_array = (torch.rand(int((n_units**2-n_units)/2),1)) * (lin_stiff_max - lin_stiff_min) + lin_stiff_min
-        self.stiffness_coupling_matrix = torch.zeros((n_units, n_units))
-        if n_connections is not None:
-            self.n_connections = n_connections
-        else:
-            self.n_connections = n_units
-        idx=0
-        for i in range(n_units):
-            for j in range(i + 1, n_units):
-                if i == 0:
-                    if np.abs(i-j-1) < n_connections_anchor:
-                        self.stiffness_coupling_matrix[i, j] = stiffnesses_array[idx]
-                        self.stiffness_coupling_matrix[j,i] = stiffnesses_array[idx]
-                else:
-                    if np.abs(i-j-1) < n_connections:
-                        self.stiffness_coupling_matrix[i, j] = stiffnesses_array[idx]
-                        self.stiffness_coupling_matrix[j,i] = stiffnesses_array[idx]
-                idx += 1
-        self.stiffness_coupling_matrix = nn.Parameter(self.stiffness_coupling_matrix, requires_grad=False)
-
-        stiffnesses_array = (torch.rand(int((n_units**2-n_units)/2),1)) * (ang_stiff_max - ang_stiff_min) + ang_stiff_min
-        self.dist_ang_coupling = torch.zeros((n_units, n_units))
-        if n_connections_ang is not None:
-            self.n_connections_ang = n_connections_ang
-        else:
-            self.n_connections_ang = n_units
-        idx=0
-        for i in range(n_units):
-            for j in range(i + 1, n_units):
-                if i == 0:
-                    if np.abs(i-j-1) < n_connections_anchor_ang:
-                        self.dist_ang_coupling[i, j] = stiffnesses_array[idx]
-                        self.dist_ang_coupling[j,i] = stiffnesses_array[idx]
-                else:
-                    if np.abs(i-j-1) < n_connections_ang:
-                        self.dist_ang_coupling[i, j] = stiffnesses_array[idx]
-                        self.dist_ang_coupling[j,i] = stiffnesses_array[idx]
-                idx += 1
-        self.dist_ang_coupling = nn.Parameter(self.dist_ang_coupling, requires_grad=False)
-
-        eq_distances_array = (torch.rand(int((n_units**2-n_units)/2),1)) * (eq_dist_max - eq_dist_min) + eq_dist_min
-        self.eq_distances_matrix = torch.zeros((n_units, n_units))
-        idx=0
-        for i in range(n_units):
-            for j in range(i + 1, n_units):
-                self.eq_distances_matrix[i, j] = eq_distances_array[idx]
-                self.eq_distances_matrix[j,i] = eq_distances_array[idx]
-                idx += 1
-
-        self.eq_distances_matrix = self.eq_distances_matrix.reshape(n_units, n_units, 1)
-        self.eq_distances_matrix = nn.Parameter(self.eq_distances_matrix, requires_grad=False)
-
-        # equilibrium matrix for angular coupling
-        eq_distances_array = (torch.rand(int((n_units**2-n_units)/2),1)) * (eq_dist_max_ang - eq_dist_min_ang) + eq_dist_min_ang
-        self.eq_distances_mat_ang = torch.zeros((n_units, n_units))
-        idx=0
-        for i in range(n_units):
-            for j in range(i + 1, n_units):
-                self.eq_distances_mat_ang[i, j] = eq_distances_array[idx]
-                self.eq_distances_mat_ang[j,i] = -eq_distances_array[idx]
-                idx += 1
-        self.eq_distances_mat_ang = self.eq_distances_mat_ang.reshape(n_units, n_units)
-        self.eq_distances_mat_ang = nn.Parameter(self.eq_distances_mat_ang, requires_grad=False)
+        # Create coupling matrices with their equilibrium distances in one pass
+        stiff_matrix, eq_dist_matrix = self._create_sparse_coupling_with_eq_distances(
+            n_units, n_connections, n_connections_anchor,
+            lin_stiff_min, lin_stiff_max, eq_dist_min, eq_dist_max
+        )
+        self.stiffness_coupling_matrix = stiff_matrix
+        self.eq_distances_matrix = nn.Parameter(eq_dist_matrix.reshape(n_units, n_units, 1), requires_grad=False)
+        
+        ang_matrix, eq_ang_matrix = self._create_sparse_coupling_with_eq_distances(
+            n_units, n_connections_ang, n_connections_anchor_ang,
+            ang_stiff_min, ang_stiff_max, eq_dist_min_ang, eq_dist_max_ang, 
+            antisymmetric=True
+        )
+        self.dist_ang_coupling = ang_matrix
+        self.eq_distances_mat_ang = nn.Parameter(eq_ang_matrix, requires_grad=False)
 
         # if not lin_input_map:
         #     lin_input_map = torch.rand(n_units, n_inp)
@@ -94,6 +45,42 @@ class UnicycleNetwork(nn.Module):
         # if not ang_input_map:
         #     ang_input_map = torch.rand(n_units, n_inp)
         #     self.ang_input_map = nn.Parameter(ang_input_map, requires_grad=False)
+    
+    def _create_sparse_coupling_with_eq_distances(self, n_units, n_connections, n_connections_anchor, 
+                                                   stiff_min, stiff_max, eq_min, eq_max, antisymmetric=False):
+        """
+        Create sparse coupling matrix and equilibrium distance matrix in a single pass.
+        
+        Args:
+            antisymmetric: If True, equilibrium distances are antisymmetric (negated for j,i)
+        
+        Returns:
+            coupling_matrix: nn.Parameter sparse matrix
+            eq_distances: Tensor of equilibrium distances
+        """
+        coupling = torch.zeros((n_units, n_units))
+        eq_dist = torch.zeros((n_units, n_units))
+        
+        for i in range(n_units):
+            for j in range(i + 1, n_units):
+                max_conn = n_connections_anchor if i == 0 else n_connections
+                if np.abs(i - j - 1) < max_conn:
+                    # Generate both coupling stiffness and equilibrium distance
+                    stiff = torch.rand(1).item() * (stiff_max - stiff_min) + stiff_min
+                    eq = torch.rand(1).item() * (eq_max - eq_min) + eq_min
+                    
+                    coupling[i, j] = stiff
+                    coupling[j, i] = stiff
+                    
+                    if antisymmetric:
+                        eq_dist[i, j] = eq
+                        eq_dist[j, i] = -eq
+                    else:
+                        eq_dist[i, j] = eq
+                        eq_dist[j, i] = eq
+        
+        return nn.Parameter(coupling, requires_grad=False), eq_dist
+
         
     def forward(self, u_lin, u_ang, x, z, theta, s, omega):
         bs = u_lin.shape[0]
