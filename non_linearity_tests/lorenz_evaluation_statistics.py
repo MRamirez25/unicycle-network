@@ -17,12 +17,13 @@ from sklearn import preprocessing
 import optuna
 
 #%%
+
 # Add the parent directory to the system path
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-from utils import get_lorenz, n_params
+from utils import get_lorenz, n_params, count_classifier_params
 from unicycle_network_class import UnicycleReservoir
 
 #%%
@@ -41,6 +42,14 @@ N_LORENZ = 5  # Lorenz system dimension
 LAG = 25
 WASHOUT = 200
 
+# Feature selection for readout (slicing batch_activations in feature dimension)
+# Set to None to use all features, or specify (start, stop) indices
+# batch_activations has shape (batch, time, n_units*5) where n_units varies by study
+# The slice [:,:,200:300] selects features 200-300 from the concatenated state vector
+# Common choices: (200, 300) for subset of features, (0, None) or None for all features
+FEATURE_SLICE_START = 200
+FEATURE_SLICE_STOP = 300  # None means use all features from start index onwards
+
 #%%
 def set_seed(seed):
     """Set all random seeds for reproducibility"""
@@ -58,6 +67,7 @@ def load_best_params():
     storage_name = f"sqlite:///{parent_dir}/optuna_databases/{DATABASE_NAME}.db"
     study = optuna.create_study(storage=storage_name, study_name=STUDY_NAME, 
                                direction='minimize', load_if_exists="True")
+    print(f"Best parameters from study '{STUDY_NAME}': {study.best_params}")
     return study.best_params
 
 #%%
@@ -206,7 +216,12 @@ def test_esn(dataset, model, classifier, scaler, device, params):
         # Process activations - concatenate all states from states_list
         batch_activations = torch.stack(states_list, dim=1)  # (batch, time, n_units*5)
         batch_activations = batch_activations.cpu().numpy()
-        
+        # Apply feature slicing if configured
+        if FEATURE_SLICE_STOP is not None:
+            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
+        elif FEATURE_SLICE_START > 0:
+            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:]
+        # breakpoint()
         # Remove washout period from activations to match target
         batch_activations = batch_activations[:, washout:, :]  # Remove first washout time steps
         
@@ -267,6 +282,11 @@ def single_evaluation(params, seed, device, train_dataset, valid_dataset, test_d
         # Process activations - concatenate all states from states_list
         batch_activations = torch.stack(states_list, dim=1)  # (batch, time, n_units*5)
         batch_activations = batch_activations.detach().cpu().numpy()
+        # Apply feature slicing if configured
+        if FEATURE_SLICE_STOP is not None:
+            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
+        elif FEATURE_SLICE_START > 0:
+            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:]
         
         # Remove washout period from activations to match target
         batch_activations = batch_activations[:, washout:, :]  # Remove first washout time steps
@@ -284,20 +304,21 @@ def single_evaluation(params, seed, device, train_dataset, valid_dataset, test_d
     # Check for NaN values
     if np.isnan(activations).any():
         print(f"Warning: NaN values detected in activations for seed {seed}")
-        return None, None
+        return None, None, None
     
     # Standardize and train classifier
     scaler = preprocessing.StandardScaler().fit(activations)
     activations_scaled = scaler.transform(activations)
     classifier = Ridge(alpha=params['ridge_alpha']).fit(activations_scaled, targets)
+    n_classifier_params = count_classifier_params(classifier)
     
     # Evaluate
     valid_nrmse = test_esn(valid_dataset, model, classifier, scaler, device, params)
     test_nrmse = test_esn(test_dataset, model, classifier, scaler, device, params)
     
-    print(f"Seed {seed}: Valid NRMSE={valid_nrmse:.6f}, Test NRMSE={test_nrmse:.6f}")
+    print(f"Seed {seed}: Valid NRMSE={valid_nrmse:.6f}, Test NRMSE={test_nrmse:.6f}, Classifier params={n_classifier_params}")
     
-    return valid_nrmse, test_nrmse
+    return valid_nrmse, test_nrmse, n_classifier_params
 
 #%%
 def main():
@@ -331,14 +352,17 @@ def main():
     # Run evaluations
     valid_nrmses = []
     test_nrmses = []
+    classifier_params = None  # Will be same for all runs
     
     print(f"\nRunning {len(RANDOM_SEEDS)} evaluations...")
     for seed in RANDOM_SEEDS:
-        valid_nrmse, test_nrmse = single_evaluation(params, seed, device, train_dataset, valid_dataset, test_dataset)
+        valid_nrmse, test_nrmse, n_classifier_params = single_evaluation(params, seed, device, train_dataset, valid_dataset, test_dataset)
         
         if valid_nrmse is not None and test_nrmse is not None:
             valid_nrmses.append(valid_nrmse)
             test_nrmses.append(test_nrmse)
+            if classifier_params is None:
+                classifier_params = n_classifier_params
         else:
             print(f"Skipping seed {seed} due to NaN values")
     
@@ -353,6 +377,7 @@ def main():
         print("LORENZ EVALUATION STATISTICS")
         print("="*50)
         print(f"Number of successful runs: {len(valid_nrmses)}/{len(RANDOM_SEEDS)}")
+        print(f"Classifier trainable parameters: {classifier_params}")
         print(f"Validation NRMSE: {valid_mean:.6f} ± {valid_std:.6f}")
         print(f"Test NRMSE: {test_mean:.6f} ± {test_std:.6f}")
         print(f"Valid NRMSEs: {[f'{s:.6f}' for s in valid_nrmses]}")
@@ -434,6 +459,7 @@ Network Config:
 • Units: {params['n_units']}
 • Lorenz dim: {N_LORENZ}
 • Lag: {LAG}
+• Classifier params: {classifier_params}
         """
         plt.text(0.1, 0.9, summary_text, transform=plt.gca().transAxes, 
                 verticalalignment='top', fontfamily='monospace', fontsize=9)
@@ -456,6 +482,7 @@ Network Config:
             'test_std': test_std,
             'correlation': correlation,
             'seeds_used': RANDOM_SEEDS[:len(valid_nrmses)],
+            'classifier_params': classifier_params,
             'config': {
                 'n_units': params['n_units'],
                 'lorenz_dim': N_LORENZ,

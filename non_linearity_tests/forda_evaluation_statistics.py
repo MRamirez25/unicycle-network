@@ -22,7 +22,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-from utils import get_FordA_data, n_params
+from utils import get_FordA_data, n_params, count_classifier_params
 from unicycle_network_class import UnicycleReservoir
 
 #%%
@@ -34,7 +34,18 @@ DATABASE_NAME = "unicycle_nets_forda_logreg"
 # Model configuration flags
 ALIGNED_ORIENTATIONS = False
 ANG_INPUT = True
-ANG_CONNECTIONS = False
+ANG_CONNECTIONS = True
+
+# FordA specific configurations
+N_UNITS = 20
+N_CLASSES = 2
+
+# Feature selection for readout (slicing mid_states)
+# Set to None to use all features, or specify (start, stop) indices
+# For FordA with 20 units: mid_states has shape (batch, 20*4) = (batch, 80)
+# Common choices: (0, 40) for x,y positions only, (0, 80) or None for all features
+FEATURE_SLICE_START = 0
+FEATURE_SLICE_STOP = N_UNITS * 2  # First 40 features (x, y positions only)
 
 #%%
 def set_seed(seed):
@@ -180,7 +191,9 @@ def test_esn(data_loader, model, classifier, scaler, device):
         x = x.to(device)
         labels = labels.to(device)
         states_list, output, mid_states = model(x, x)
-        # mid_states = mid_states[:, :60]  # Take first 40 features, not first 40 samples
+        # Apply feature slicing if configured
+        if FEATURE_SLICE_STOP is not None:
+            mid_states = mid_states[:, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
         activations.append(mid_states.cpu())
         ys.append(labels.cpu())
     
@@ -214,7 +227,9 @@ def single_evaluation(params, seed, device, train_loader, valid_loader, test_loa
         print(f"Input batch shape: {x.shape}")  # Debug: print input shape
         labels = labels.to(device)
         states_list, output, mid_states = model(x, x)
-        # mid_states = mid_states[:, :60]  # Take first 40 features, not first 40 samples
+        # Apply feature slicing if configured
+        if FEATURE_SLICE_STOP is not None:
+            mid_states = mid_states[:, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
 
         activations.append(mid_states.detach().cpu())
         ys.append(labels.cpu())
@@ -225,20 +240,23 @@ def single_evaluation(params, seed, device, train_loader, valid_loader, test_loa
     # Check for NaN values
     if np.isnan(activations).any():
         print(f"Warning: NaN values detected in activations for seed {seed}")
-        return None, None
+        return None, None, None
     
     # Standardize and train classifier
     scaler = preprocessing.StandardScaler().fit(activations)
     activations = scaler.transform(activations)
     classifier = LogisticRegression(max_iter=1000).fit(activations, ys)
     
+    # Count classifier parameters
+    n_classifier_params = count_classifier_params(classifier)
+    
     # Evaluate
     valid_score = test_esn(valid_loader, model, classifier, scaler, device)
     test_score = test_esn(test_loader, model, classifier, scaler, device)
     
-    print(f"Seed {seed}: Valid={valid_score:.4f}, Test={test_score:.4f}")
+    print(f"Seed {seed}: Valid={valid_score:.4f}, Test={test_score:.4f}, Classifier params={n_classifier_params}")
     
-    return valid_score, test_score
+    return valid_score, test_score, n_classifier_params
 
 #%%
 def main():
@@ -258,14 +276,17 @@ def main():
     # Run evaluations
     valid_scores = []
     test_scores = []
+    classifier_params = None  # Will be same for all runs
     
     print(f"\nRunning {len(RANDOM_SEEDS)} evaluations...")
     for seed in RANDOM_SEEDS:
-        valid_score, test_score = single_evaluation(params, seed, device, train_loader, valid_loader, test_loader)
+        valid_score, test_score, n_classifier_params = single_evaluation(params, seed, device, train_loader, valid_loader, test_loader)
         
         if valid_score is not None and test_score is not None:
             valid_scores.append(valid_score)
             test_scores.append(test_score)
+            if classifier_params is None:
+                classifier_params = n_classifier_params
         else:
             print(f"Skipping seed {seed} due to NaN values")
     
@@ -280,6 +301,7 @@ def main():
         print("EVALUATION STATISTICS")
         print("="*50)
         print(f"Number of successful runs: {len(valid_scores)}/{len(RANDOM_SEEDS)}")
+        print(f"Classifier trainable parameters: {classifier_params}")
         print(f"Validation accuracy: {valid_mean:.4f} ± {valid_std:.4f}")
         print(f"Test accuracy: {test_mean:.4f} ± {test_std:.4f}")
         print(f"Valid scores: {[f'{s:.4f}' for s in valid_scores]}")
@@ -357,6 +379,7 @@ Correlation: {correlation:.3f}
 Network Config:
 • Units: 20
 • Classes: 2
+• Classifier params: {classifier_params}
         """
         plt.text(0.1, 0.9, summary_text, transform=plt.gca().transAxes, 
                 verticalalignment='top', fontfamily='monospace', fontsize=10)
@@ -379,6 +402,7 @@ Network Config:
             'test_std': test_std,
             'correlation': correlation,
             'seeds_used': RANDOM_SEEDS[:len(valid_scores)],
+            'classifier_params': classifier_params,
             'config': {
                 'n_units': 20,
                 'n_classes': 2,
@@ -422,6 +446,8 @@ if 'results' in locals() and results is not None:
         f.write(f"Configuration:\n")
         f.write(f"  - Network units: {results['config']['n_units']}\n")
         f.write(f"  - Classes: {results['config']['n_classes']}\n")
+        f.write(f"  - Feature slice: [{FEATURE_SLICE_START}:{FEATURE_SLICE_STOP}]\n")
+        f.write(f"  - Classifier trainable params: {results['classifier_params']}\n")
         f.write(f"  - Aligned orientations: {results['config']['aligned_orientations']}\n")
         f.write(f"  - Angular input: {results['config']['ang_input']}\n")
         f.write(f"  - Angular connections: {results['config']['ang_connections']}\n\n")

@@ -22,7 +22,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-from utils import get_cifar_data, n_params
+from utils import get_cifar_data, n_params, count_classifier_params
 from unicycle_network_class import UnicycleReservoir
 
 #%%
@@ -40,6 +40,13 @@ ANG_CONNECTIONS = True
 N_UNITS = 200
 N_INP = 96
 N_CLASSES = 10
+
+# Feature selection for readout (slicing mid_states)
+# Set to None to use all features, or specify (start, stop) indices
+# For CIFAR-10 with 200 units: mid_states has shape (batch, 200*4) = (batch, 800)
+# Common choices: (0, 400) for x,y positions only, (0, 800) or None for all features
+FEATURE_SLICE_START = 0
+FEATURE_SLICE_STOP = 600
 
 #%%
 def set_seed(seed):
@@ -210,6 +217,10 @@ def test_esn(data_loader, model, classifier, scaler, device, rand_test, bs_test)
         
         states_list, output, mid_states = model(images_processed, images_processed)
         
+        # Apply feature slicing if configured
+        if FEATURE_SLICE_STOP is not None:
+            mid_states = mid_states[:, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
+        
         # Immediately move to CPU and clean up GPU tensors
         activations.append(mid_states.detach().cpu())
         ys.append(labels.detach().cpu())
@@ -277,6 +288,10 @@ def single_evaluation(params, seed, device, train_loader, valid_loader, test_loa
         with torch.no_grad():  # Ensure no gradient tracking
             states_list, output, mid_states = model(images_processed, images_processed)
         
+        # Apply feature slicing if configured
+        if FEATURE_SLICE_STOP is not None:
+            mid_states = mid_states[:, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
+        
         # Immediately move to CPU and clean up
         activations.append(mid_states.detach().cpu())
         ys.append(labels.detach().cpu())
@@ -299,12 +314,15 @@ def single_evaluation(params, seed, device, train_loader, valid_loader, test_loa
     # Check for NaN values
     if np.isnan(activations).any():
         print(f"Warning: NaN values detected in activations for seed {seed}")
-        return None, None
+        return None, None, None
     
     # Standardize and train classifier
     scaler = preprocessing.StandardScaler().fit(activations)
     activations = scaler.transform(activations)
     classifier = LogisticRegression(max_iter=500).fit(activations, ys)
+    
+    # Count classifier parameters
+    n_classifier_params = count_classifier_params(classifier)
     
     # Aggressively free memory after training
     del activations, ys, rand_train  # Remove large training tensors
@@ -339,9 +357,9 @@ def single_evaluation(params, seed, device, train_loader, valid_loader, test_loa
         torch.cuda.synchronize()
         print(f"GPU memory after evaluation cleanup: {torch.cuda.memory_allocated() / 1e6:.1f} MB")
     
-    print(f"Seed {seed}: Valid={valid_score:.4f}, Test={test_score:.4f}")
+    print(f"Seed {seed}: Valid={valid_score:.4f}, Test={test_score:.4f}, Classifier params={n_classifier_params}")
     
-    return valid_score, test_score
+    return valid_score, test_score, n_classifier_params
 
 #%%
 def main():
@@ -383,14 +401,17 @@ def main():
     # Run evaluations
     valid_scores = []
     test_scores = []
+    classifier_params = None  # Will be same for all runs
     
     print(f"\nRunning {len(RANDOM_SEEDS)} evaluations...")
     for seed in RANDOM_SEEDS:
-        valid_score, test_score = single_evaluation(params, seed, device, train_loader, valid_loader, test_loader)
+        valid_score, test_score, n_classifier_params = single_evaluation(params, seed, device, train_loader, valid_loader, test_loader)
         
         if valid_score is not None and test_score is not None:
             valid_scores.append(valid_score)
             test_scores.append(test_score)
+            if classifier_params is None:
+                classifier_params = n_classifier_params
         else:
             print(f"Skipping seed {seed} due to NaN values")
     
@@ -405,6 +426,7 @@ def main():
         print("CIFAR-10 EVALUATION STATISTICS")
         print("="*50)
         print(f"Number of successful runs: {len(valid_scores)}/{len(RANDOM_SEEDS)}")
+        print(f"Classifier trainable parameters: {classifier_params}")
         print(f"Validation accuracy: {valid_mean:.4f} ± {valid_std:.4f}")
         print(f"Test accuracy: {test_mean:.4f} ± {test_std:.4f}")
         print(f"Valid scores: {[f'{s:.4f}' for s in valid_scores]}")
@@ -486,6 +508,7 @@ Network Config:
 • Units: {N_UNITS}
 • Input dim: {N_INP}
 • Classes: {N_CLASSES}
+• Classifier params: {classifier_params}
         """
         plt.text(0.1, 0.9, summary_text, transform=plt.gca().transAxes, 
                 verticalalignment='top', fontfamily='monospace', fontsize=10)
@@ -508,6 +531,7 @@ Network Config:
             'test_std': test_std,
             'correlation': correlation,
             'seeds_used': RANDOM_SEEDS[:len(valid_scores)],
+            'classifier_params': classifier_params,
             'config': {
                 'n_units': N_UNITS,
                 'n_inp': N_INP,
@@ -553,6 +577,7 @@ if 'results' in locals() and results is not None:
         f.write(f"  - Network units: {results['config']['n_units']}\n")
         f.write(f"  - Input dimension: {results['config']['n_inp']}\n") 
         f.write(f"  - Classes: {results['config']['n_classes']}\n")
+        f.write(f"  - Feature slice: [{FEATURE_SLICE_START}:{FEATURE_SLICE_STOP}]\n")
         f.write(f"  - Aligned orientations: {results['config']['aligned_orientations']}\n")
         f.write(f"  - Angular input: {results['config']['ang_input']}\n")
         f.write(f"  - Angular connections: {results['config']['ang_connections']}\n\n")

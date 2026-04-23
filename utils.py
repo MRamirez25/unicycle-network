@@ -1,3 +1,7 @@
+'''
+Most code taken from https://github.com/AndreaCossu/RandomizedCoupledOscillators/blob/master/utils.py
+'''
+
 from scipy.integrate import odeint
 import numpy as np
 import torch
@@ -34,6 +38,14 @@ def n_params(model):
     """
     return (sum([a.size for a in model.coef_]) +
             sum([a.size for a in model.intercept_]))
+
+
+def count_classifier_params(classifier):
+    """Count the number of trainable parameters in a sklearn classifier."""
+    n_params = classifier.coef_.size
+    if hasattr(classifier, 'intercept_') and classifier.intercept_ is not None:
+        n_params += np.array(classifier.intercept_).size
+    return n_params
 
 
 # ########## Torch Dataset for FordA ############## #
