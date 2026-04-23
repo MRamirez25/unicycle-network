@@ -584,3 +584,198 @@ max_neg_unit = max_negative_idx % n_units
 
 print(f"\nStrongest positive weight: Unit {max_pos_unit}, {state_names[max_pos_state]} = {weights[max_positive_idx]:.4f}")
 print(f"Strongest negative weight: Unit {max_neg_unit}, {state_names[max_neg_state]} = {weights[max_negative_idx]:.4f}")
+
+# %%
+# =============================================================================
+# CLUSTERING ANALYSIS IN (x, y) SPACE
+# =============================================================================
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, adjusted_rand_score
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+#%% 
+# Prepare data: combine class 0 and class 1 data
+# x_states_last_0 and y_states_last_0 have shape (n_units, n_samples_class_0)
+# x_states_last_1 and y_states_last_1 have shape (n_units, n_samples_class_1)
+
+# Get the last states for all samples
+all_last_states = states_list[-1].detach().cpu().numpy()  # Shape: (batch_size, n_features)
+all_x = all_last_states[:, 0:n_units]  # Shape: (batch_size, n_units)
+all_y = all_last_states[:, n_units:2*n_units]  # Shape: (batch_size, n_units)
+all_labels = labels.cpu().numpy().flatten()  # True class labels (ensure 1D)
+
+print(f"all_x shape: {all_x.shape}")
+print(f"all_y shape: {all_y.shape}")
+print(f"all_labels shape: {all_labels.shape}")
+print(f"Number of class 0: {np.sum(all_labels == 0)}, class 1: {np.sum(all_labels == 1)}")
+
+#%%
+# 1. SILHOUETTE SCORE PER UNIT
+# For each unit, measure how well the (x, y) positions separate by class
+silhouette_per_unit = []
+
+for unit in range(n_units):
+    # Get (x, y) for this unit across all samples
+    unit_xy = np.column_stack([all_x[:, unit], all_y[:, unit]])  # Shape: (batch_size, 2)
+    
+    # Compute silhouette score using true labels
+    try:
+        sil_score = silhouette_score(unit_xy, all_labels)
+    except:
+        sil_score = 0  # In case of issues
+    silhouette_per_unit.append(sil_score)
+
+silhouette_per_unit = np.array(silhouette_per_unit)
+
+plt.figure(figsize=(10, 4))
+plt.bar(range(n_units), silhouette_per_unit)
+plt.xlabel('Unicycle Unit')
+plt.ylabel('Silhouette Score')
+plt.title('Class Separation Quality per Unit (in x,y space)\nHigher = better separation')
+plt.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.savefig('silhouette_per_unit.png', dpi=300)
+plt.show()
+
+print(f"\nBest separating units (by silhouette): {np.argsort(silhouette_per_unit)[-5:][::-1]}")
+print(f"Best silhouette scores: {silhouette_per_unit[np.argsort(silhouette_per_unit)[-5:][::-1]]}")
+
+#%%
+# 2. K-MEANS CLUSTERING PER UNIT
+# See if K-means with k=2 finds clusters that match the true classes
+kmeans_ari_per_unit = []  # Adjusted Rand Index
+
+for unit in range(n_units):
+    unit_xy = np.column_stack([all_x[:, unit], all_y[:, unit]])
+    
+    kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+    predicted_clusters = kmeans.fit_predict(unit_xy)
+    
+    # Adjusted Rand Index: 1 = perfect match, 0 = random
+    ari = adjusted_rand_score(all_labels.reshape(-1), predicted_clusters)
+    kmeans_ari_per_unit.append(ari)
+
+kmeans_ari_per_unit = np.array(kmeans_ari_per_unit)
+
+plt.figure(figsize=(10, 4))
+plt.bar(range(n_units), kmeans_ari_per_unit)
+plt.xlabel('Unicycle Unit')
+plt.ylabel('Adjusted Rand Index')
+plt.title('K-Means Clustering Agreement with True Labels per Unit\nHigher = K-means finds similar clusters to true classes')
+plt.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.savefig('kmeans_ari_per_unit.png', dpi=300)
+plt.show()
+
+print(f"\nBest clustering units (by ARI): {np.argsort(kmeans_ari_per_unit)[-5:][::-1]}")
+print(f"Best ARI scores: {kmeans_ari_per_unit[np.argsort(kmeans_ari_per_unit)[-5:][::-1]]}")
+
+#%%
+# 3. VISUALIZE TOP SEPARATING UNITS
+top_units = np.argsort(silhouette_per_unit)[-4:][::-1]  # Top 4 by silhouette
+
+fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+axes = axes.flatten()
+
+for i, unit in enumerate(top_units):
+    ax = axes[i]
+    
+    # Plot class 0
+    ax.scatter(all_x[all_labels == 0, unit], all_y[all_labels == 0, unit], 
+               c='orange', alpha=0.6, label='Class 0', s=20)
+    # Plot class 1
+    ax.scatter(all_x[all_labels == 1, unit], all_y[all_labels == 1, unit], 
+               c='blue', alpha=0.6, label='Class 1', s=20)
+    
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title(f'Unit {unit}\nSilhouette: {silhouette_per_unit[unit]:.3f}, ARI: {kmeans_ari_per_unit[unit]:.3f}')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('top_separating_units.png', dpi=300)
+plt.show()
+
+#%%
+# 4. PCA ON FULL (x, y) SPACE (2*n_units dimensions)
+# Combine all (x, y) into a single feature vector per sample
+xy_combined = np.hstack([all_x, all_y])  # Shape: (batch_size, 2*n_units)
+
+pca = PCA(n_components=2)
+xy_pca = pca.fit_transform(xy_combined)
+
+plt.figure(figsize=(8, 6))
+plt.scatter(xy_pca[all_labels == 0, 0], xy_pca[all_labels == 0, 1], 
+           c='orange', alpha=0.6, label='Class 0', s=20)
+plt.scatter(xy_pca[all_labels == 1, 0], xy_pca[all_labels == 1, 1], 
+           c='blue', alpha=0.6, label='Class 1', s=20)
+plt.xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}% var)')
+plt.ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% var)')
+plt.title('PCA of all units (x, y) positions')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('pca_xy_space.png', dpi=300)
+plt.show()
+
+# Silhouette score in PCA space
+pca_silhouette = silhouette_score(xy_pca, all_labels)
+print(f"\nSilhouette score in PCA space: {pca_silhouette:.4f}")
+
+#%%
+# 5. t-SNE ON FULL (x, y) SPACE
+tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+xy_tsne = tsne.fit_transform(xy_combined)
+
+plt.figure(figsize=(8, 6))
+plt.scatter(xy_tsne[all_labels == 0, 0], xy_tsne[all_labels == 0, 1], 
+           c='orange', alpha=0.6, label='Class 0', s=20)
+plt.scatter(xy_tsne[all_labels == 1, 0], xy_tsne[all_labels == 1, 1], 
+           c='blue', alpha=0.6, label='Class 1', s=20)
+plt.xlabel('t-SNE 1')
+plt.ylabel('t-SNE 2')
+plt.title('t-SNE of all units (x, y) positions')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('tsne_xy_space.png', dpi=300)
+plt.show()
+
+# Silhouette score in t-SNE space
+tsne_silhouette = silhouette_score(xy_tsne, all_labels)
+print(f"Silhouette score in t-SNE space: {tsne_silhouette:.4f}")
+
+#%%
+# 6. SUMMARY: Compare unit importance from clustering vs classifier weights
+fig, ax = plt.subplots(figsize=(10, 5))
+
+x_pos = np.arange(n_units)
+width = 0.35
+
+# Normalize for comparison
+sil_normalized = (silhouette_per_unit - silhouette_per_unit.min()) / (silhouette_per_unit.max() - silhouette_per_unit.min() + 1e-8)
+
+# Get classifier weight magnitudes for x and y (first two state types)
+xy_weight_importance = np.abs(weights_reshaped[0, :]) + np.abs(weights_reshaped[1, :])  # |w_x| + |w_y|
+xy_normalized = (xy_weight_importance - xy_weight_importance.min()) / (xy_weight_importance.max() - xy_weight_importance.min() + 1e-8)
+
+ax.bar(x_pos - width/2, sil_normalized, width, label='Silhouette (clustering)', alpha=0.7)
+ax.bar(x_pos + width/2, xy_normalized, width, label='Classifier |w_x|+|w_y|', alpha=0.7)
+
+ax.set_xlabel('Unicycle Unit')
+ax.set_ylabel('Normalized Importance')
+ax.set_title('Comparison: Clustering Separation vs Classifier Weights')
+ax.legend()
+ax.set_xticks(x_pos)
+
+plt.tight_layout()
+plt.savefig('clustering_vs_classifier.png', dpi=300)
+plt.show()
+
+# Correlation between silhouette and classifier weights
+correlation = np.corrcoef(silhouette_per_unit, xy_weight_importance)[0, 1]
+print(f"\nCorrelation between silhouette score and classifier (x,y) weights: {correlation:.4f}")
+
+# %%
