@@ -8,7 +8,7 @@ from utils import get_FordA_data, get_mnist_data
 import time
 
 # Objective function for Optuna
-def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=None):
+def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=None, n_units=20):
     # Suggest hyperparameters for Optuna to search
     aligned_orientations = trial.suggest_categorical("aligned_orientations", [True, False]) if aligned_orientations is None else aligned_orientations
     if not aligned_orientations:
@@ -18,7 +18,7 @@ def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=
         ang_input = False
         ang_connections = False
 
-    n_units = 20#trial.suggest_int('n_units', 10, 20, step=10)
+    n_units = n_units#trial.suggest_int('n_units', 10, 20, step=10)
     lr = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
     lin_stiff_min = trial.suggest_float('lin_stiff_min', 0.1, 1.0)
     lin_stiff_max = trial.suggest_float('lin_stiff_max', lin_stiff_min, 10.0)  # lin_stiff_max >= lin_stiff_min
@@ -220,21 +220,22 @@ if __name__ == '__main__':
     # # Get the best hyperparameters
     # best_params = study.best_params
     # print(f"Best hyperparameters: {best_params}")
-
-    database_name = "unicycle_nets_forda_logreg"
-    study_name = "only_last_state_as_readout_20_units_not_aligned_less_ang_magnitude_no_tanh"
-    storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
-    study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
+    n_units_list = [5,10,15,20,25,30]
+    database_name = "forda_increasing_n_units"
+    for n_units in n_units_list:
+        print(f"Starting optimization for n_units={n_units}")
+        study_name = f"{n_units}_units"
+        storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
+        study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
     # for trial in study.trials:
     #     if trial.datetime_complete and trial.datetime_start:
     #         duration = trial.datetime_complete - trial.datetime_start
     #         print(f"Trial {trial.number} took {duration.total_seconds()} seconds")
-    study.optimize(partial(objective, aligned_orientations=False, ang_input=True, ang_connections=True), timeout=3600*2)
+        study.optimize(partial(objective, aligned_orientations=False, ang_input=True, ang_connections=True, n_units=n_units), n_trials=200)
 
-    # Get the best hyperparameters
-    best_params = study.best_params
-    print(f"Best hyperparameters: {best_params}")
-
+        # Get the best hyperparameters
+        best_params = study.best_params
+        print(f"Best hyperparameters: {best_params}")
     # # Test the model with the best hyperparameters on the test set
     # test_accuracy = test(test_loader)
     # print(f"Test accuracy with the best model: {test_accuracy}")

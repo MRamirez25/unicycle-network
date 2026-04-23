@@ -8,7 +8,7 @@ from utils import get_mnist_data
 import time
 
 # Objective function for Optuna
-def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=None):
+def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=None, n_units=None):
     # Suggest hyperparameters for Optuna to search
     aligned_orientations = trial.suggest_categorical("aligned_orientations", [True, False]) if aligned_orientations is None else aligned_orientations
     if not aligned_orientations:
@@ -18,7 +18,7 @@ def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=
         ang_input = False
         ang_connections = False
 
-    n_units = 100#trial.suggest_int('n_units', 10, 200, step=10)
+    n_units = n_units#trial.suggest_int('n_units', 10, 200, step=10)
     lin_stiff_min = trial.suggest_float('lin_stiff_min', 0.1, 1.0)
     lin_stiff_max = trial.suggest_float('lin_stiff_max', lin_stiff_min, 10.0)  # lin_stiff_max >= lin_stiff_min
     ang_stiff_min = trial.suggest_float('ang_stiff_min', 0.1, 1.0)
@@ -84,7 +84,7 @@ def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=
     n_past_steps_readout=n_steps_readout).to(device)
 
     bs_train, bs_test = bs, bs
-    train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=classes, new_fraction=0.2, test_fraction=0.2)
+    train_loader, valid_loader, test_loader = get_mnist_data(bs_train=bs_train, bs_test=bs_test, classes=classes, new_fraction=0.4, test_fraction=0.4)
     # n_epochs = trial.suggest_int("n_epochs", 1,30)
     model.set_init_states_random(bs_train)
 
@@ -175,9 +175,9 @@ def objective(trial, aligned_orientations=None, ang_input=None, ang_connections=
 
     # Validation and test scores using ESN
     validation_accuracy = test_esn(valid_loader, model, classifier, scaler, bs_test)
-    test_accuracy = test_esn(test_loader, model, classifier, scaler, bs_test)
+    # test_accuracy = test_esn(test_loader, model, classifier, scaler, bs_test)
     print(f"Validation score (ESN): {validation_accuracy}")
-    print(f"Test score (ESN): {test_accuracy}")
+    # print(f"Test score (ESN): {test_accuracy}")
     # Optuna will aim to maximize validation accuracy
     return validation_accuracy
 
@@ -207,19 +207,35 @@ if __name__ == '__main__':
     # device = "cpu"
     # Load your data (train_loader, valid_loader, and test_loader)
 
-    database_name = "unicycle_mnist_all_digits_logreg"
-    study_name = "not_aligned_w_input_w_connections_actual_100_units_last_readout_no_tanh"
-    storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
-    study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
+    n_units_list = [4,8,12,16,20]
+
+
+    database_name = "unicycle_mnist_increasing_n_smaller"
+    for n_units in n_units_list:
+        print(f"Starting optimization for n_units={n_units}")
+        study_name = f"{n_units}_units"
+        storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
+        study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
+    # study_name = "not_aligned_w_input_w_connections_actual_100_units_last_readout_no_tanh"
+    # storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
+    # study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
     # for trial in study.trials:
     #     if trial.datetime_complete and trial.datetime_start:
     #         duration = trial.datetime_complete - trial.datetime_start
     #         print(f"Trial {trial.number} took {duration.total_seconds()} seconds")
-    study.optimize(partial(objective, aligned_orientations=False, ang_input=True, ang_connections=True), timeout=3600*10)
+        study.optimize(partial(objective, aligned_orientations=False, ang_input=True, ang_connections=True, n_units=n_units), n_trials=100)
 
     # Get the best hyperparameters
-    best_params = study.best_params
-    print(f"Best hyperparameters: {best_params}")
+        best_params = study.best_params
+        print(f"Best hyperparameters: {best_params}")
+
+    # database_name = "unicycle_mnist_increasing_n"
+    # for n_units in [60]:
+    #     print(f"Starting optimization for n_units={n_units}")
+    #     study_name = f"{n_units}_units_v2"
+    #     storage_name = "sqlite:///optuna_databases/{}.db".format(database_name)
+    #     study = optuna.create_study(storage=storage_name, study_name=study_name, direction='maximize', load_if_exists="True")
+    #     study.optimize(partial(objective, aligned_orientations=False, ang_input=True, ang_connections=True, n_units=n_units), n_trials=300)
 
     # # Test the model with the best hyperparameters on the test set
     # test_accuracy = test(test_loader)
