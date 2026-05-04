@@ -183,6 +183,8 @@ standard_forcing_plots.py
 *.mp4
 *.mkv
 *.gif
+plots/*
+animations/*
 
 # databases, statistics
 *.db

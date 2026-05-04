@@ -13,8 +13,6 @@ import torchvision.transforms as transforms
 from torch import nn
 from sklearn.model_selection import train_test_split
 # from esn import spectral_norm_scaling
-import jax.numpy as jnp
-import tensorflow_datasets as tfds
 
 def count_parameters(model):
     """Return total number of parameters and
@@ -635,33 +633,6 @@ def get_mnist_data(bs_train, bs_test, classes=None, new_fraction=0.5, test_fract
                                               shuffle=False, drop_last=True)
 
     return train_loader, valid_loader, test_loader
-
-def get_mnist_data_jax(bs_train, bs_test, classes=None):
-    # Load the MNIST dataset
-    train_dataset, test_dataset = tfds.load('mnist', split=['train', 'test'], as_supervised=True)
-
-    # Filter the dataset to only include the specified classes
-    if classes is not None:
-        train_dataset = train_dataset.filter(lambda img, label: jnp.isin(label, classes))
-        test_dataset = test_dataset.filter(lambda img, label: jnp.isin(label, classes))
-
-    # Split the training data into train and validation sets
-    train_size = int(0.95 * len(train_dataset))
-    valid_size = len(train_dataset) - train_size
-
-    train_dataset = train_dataset.take(train_size)
-    valid_dataset = train_dataset.skip(train_size)
-
-    # Function to preprocess the data
-    def preprocess(image, label):
-        image = jnp.array(image) / 255.0  # Normalize images to [0, 1]
-        return image, label
-
-    train_dataset = train_dataset.map(preprocess).batch(bs_train).shuffle(buffer_size=10000)
-    valid_dataset = valid_dataset.map(preprocess).batch(bs_test)
-    test_dataset = test_dataset.map(preprocess).batch(bs_test)
-
-    return train_dataset, valid_dataset, test_dataset
 
 def load_har(root):
     """
