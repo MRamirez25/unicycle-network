@@ -43,12 +43,23 @@ LAG = 25
 WASHOUT = 200
 
 # Feature selection for readout (slicing batch_activations in feature dimension)
-# Set to None to use all features, or specify (start, stop) indices
-# batch_activations has shape (batch, time, n_units*5) where n_units varies by study
-# The slice [:,:,200:300] selects features 200-300 from the concatenated state vector
-# Common choices: (200, 300) for subset of features, (0, None) or None for all features
-FEATURE_SLICE_START = 200
-FEATURE_SLICE_STOP = 300  # None means use all features from start index onwards
+# batch_activations has shape (batch, time, n_units*5) where states are concatenated as:
+#   [x (n_units), z (n_units), theta (n_units), s (n_units), omega (n_units)]
+#
+# Option 1: Feature-based slicing (select by feature indices)
+#   FEATURE_SLICE_START/STOP: Select features by index in flattened space
+#   Example: (200, 300) selects features 200-300
+#   Set to (0, None) or (None, None) for all features
+FEATURE_SLICE_START = None
+FEATURE_SLICE_STOP = None
+#
+# Option 2: Unit-based slicing (select by unit range, all states per unit)
+#   UNIT_SLICE_START/STOP: Select units start:stop with all their states
+#   Example: (0, 100) selects all 5 states (x,z,theta,s,omega) from units 0-99
+#   Set to (0, None) or (None, None) for all units
+#   Note: Unit-based slicing takes precedence over feature-based slicing if both are specified
+UNIT_SLICE_START = 25
+UNIT_SLICE_STOP = 75
 
 #%%
 def set_seed(seed):
@@ -60,6 +71,73 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+#%%
+def get_feature_slice_from_units(n_units_total, unit_start=None, unit_stop=None):
+    """
+    Convert unit-based slicing to feature indices.
+    
+    States are organized as: [x, z, theta, s, omega] each with n_units elements
+    This function extracts all 5 states for units [unit_start:unit_stop]
+    
+    Args:
+        n_units_total: Total number of units in the network
+        unit_start: Starting unit index (default: 0)
+        unit_stop: Stopping unit index, exclusive (default: n_units_total)
+    
+    Returns:
+        Feature slice indices as a list, or None if invalid
+    
+    Example:
+        n_units=200, unit_start=0, unit_stop=100
+        Returns indices for x[0:100], z[0:100], theta[0:100], s[0:100], omega[0:100]
+    """
+    if unit_start is None and unit_stop is None:
+        return None  # Use all features
+    
+    if unit_start is None:
+        unit_start = 0
+    if unit_stop is None:
+        unit_stop = n_units_total
+    
+    if not (0 <= unit_start <= n_units_total and 0 <= unit_stop <= n_units_total and unit_start <= unit_stop):
+        raise ValueError(f"Invalid unit slice: start={unit_start}, stop={unit_stop}, n_units={n_units_total}")
+    
+    # Collect indices for all 5 states in the specified unit range
+    n_states = 5  # x, z, theta, s, omega
+    indices = []
+    for state_idx in range(n_states):
+        state_offset = state_idx * n_units_total
+        indices.extend(range(state_offset + unit_start, state_offset + unit_stop))
+    
+    return indices
+
+#%%
+def apply_feature_slice(batch_activations, feature_start=None, feature_stop=None, unit_slice_indices=None):
+    """
+    Apply feature slicing to batch activations.
+    
+    Args:
+        batch_activations: Array of shape (batch, time, n_features)
+        feature_start: Start index for feature-based slicing
+        feature_stop: Stop index for feature-based slicing
+        unit_slice_indices: List of indices for unit-based slicing (takes precedence)
+    
+    Returns:
+        Sliced batch_activations
+    """
+    # Unit-based slicing takes precedence
+    if unit_slice_indices is not None:
+        return batch_activations[:, :, unit_slice_indices]
+    
+    # Feature-based slicing
+    if feature_stop is not None:
+        return batch_activations[:, :, feature_start:feature_stop]
+    elif feature_start is not None and feature_start > 0:
+        return batch_activations[:, :, feature_start:]
+    
+    # No slicing
+    return batch_activations
 
 #%%
 def load_best_params():
@@ -112,6 +190,7 @@ def create_input_maps(params, n_units, n_inp, seed):
 def initialize_model(params, lin_input_map, ang_input_map, device):
     """Initialize and configure the model"""
     n_units = params['n_units']
+    print("NUMBER OF UNITS:", n_units)
     n_inp = N_LORENZ
     
     # Extract parameters
@@ -205,6 +284,12 @@ def test_esn(dataset, model, classifier, scaler, device, params):
     """Test ESN performance for Lorenz prediction"""
     activations, targets = [], []
     washout = params['washout']
+    n_units = params['n_units']
+    
+    # Determine feature slice indices
+    unit_slice_indices = None
+    if UNIT_SLICE_START is not None or UNIT_SLICE_STOP is not None:
+        unit_slice_indices = get_feature_slice_from_units(n_units, UNIT_SLICE_START, UNIT_SLICE_STOP)
     
     for batch_idx, batch_data in enumerate(dataset):
         # Process data like in unicycle_optuna_lorenz.py
@@ -216,12 +301,15 @@ def test_esn(dataset, model, classifier, scaler, device, params):
         # Process activations - concatenate all states from states_list
         batch_activations = torch.stack(states_list, dim=1)  # (batch, time, n_units*5)
         batch_activations = batch_activations.cpu().numpy()
-        # Apply feature slicing if configured
-        if FEATURE_SLICE_STOP is not None:
-            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
-        elif FEATURE_SLICE_START > 0:
-            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:]
-        # breakpoint()
+        
+        # Apply feature slicing
+        batch_activations = apply_feature_slice(
+            batch_activations, 
+            feature_start=FEATURE_SLICE_START, 
+            feature_stop=FEATURE_SLICE_STOP,
+            unit_slice_indices=unit_slice_indices
+        )
+        
         # Remove washout period from activations to match target
         batch_activations = batch_activations[:, washout:, :]  # Remove first washout time steps
         
@@ -268,6 +356,12 @@ def single_evaluation(params, seed, device, train_dataset, valid_dataset, test_d
     # Set initial states after washup
     model.set_init_states(batch_size, x, z, theta, s, omega)
     
+    # Determine feature slice indices
+    n_units = params['n_units']
+    unit_slice_indices = None
+    if UNIT_SLICE_START is not None or UNIT_SLICE_STOP is not None:
+        unit_slice_indices = get_feature_slice_from_units(n_units, UNIT_SLICE_START, UNIT_SLICE_STOP)
+    
     # Train Ridge regression classifier
     activations, targets = [], []
     washout = params['washout']
@@ -282,11 +376,14 @@ def single_evaluation(params, seed, device, train_dataset, valid_dataset, test_d
         # Process activations - concatenate all states from states_list
         batch_activations = torch.stack(states_list, dim=1)  # (batch, time, n_units*5)
         batch_activations = batch_activations.detach().cpu().numpy()
-        # Apply feature slicing if configured
-        if FEATURE_SLICE_STOP is not None:
-            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:FEATURE_SLICE_STOP]
-        elif FEATURE_SLICE_START > 0:
-            batch_activations = batch_activations[:, :, FEATURE_SLICE_START:]
+        
+        # Apply feature slicing
+        batch_activations = apply_feature_slice(
+            batch_activations, 
+            feature_start=FEATURE_SLICE_START, 
+            feature_stop=FEATURE_SLICE_STOP,
+            unit_slice_indices=unit_slice_indices
+        )
         
         # Remove washout period from activations to match target
         batch_activations = batch_activations[:, washout:, :]  # Remove first washout time steps
