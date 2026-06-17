@@ -743,7 +743,7 @@ def check(m):
 
 def get_FordA_data(bs_train,bs_test, whole_train=False, RC=True):
 
-    def fromtxt_to_numpy(filename='FordA_TRAIN.txt', valid_len=1320):
+    def fromtxt_to_numpy(filename='dataset_evaluations/FordA_TRAIN.txt', valid_len=1320):
         # read the txt file
         forddata = np.genfromtxt(filename, dtype='float64')
         # create a list of lists with each line of the txt file
@@ -785,16 +785,16 @@ def get_FordA_data(bs_train,bs_test, whole_train=False, RC=True):
         valid_len = 0
     else:
         valid_len = 1320
-    train_series, train_targets, val_series, val_targets = fromtxt_to_numpy(filename='FordA_TRAIN.txt', valid_len=valid_len)
+    train_series, train_targets, val_series, val_targets = fromtxt_to_numpy(filename='dataset_evaluations/FordA_TRAIN.txt', valid_len=valid_len)
     mytraindata, myvaldata = inp_out_pairs(train_series, train_targets), inp_out_pairs(val_series, val_targets)
     if RC:
         mytraindata, myvaldata = datasetforRC(mytraindata), datasetforRC(myvaldata)
-        test_series, test_targets = fromtxt_to_numpy(filename='FordA_TEST.txt', valid_len=None)
+        test_series, test_targets = fromtxt_to_numpy(filename='dataset_evaluations/FordA_TEST.txt', valid_len=None)
         mytestdata = inp_out_pairs(test_series, test_targets)
         mytestdata = datasetforRC(mytestdata)
     else:
         mytraindata, myvaldata = FordA_dataset(mytraindata), FordA_dataset(myvaldata)
-        test_series, test_targets = fromtxt_to_numpy(filename='FordA_TEST.txt', valid_len=None)
+        test_series, test_targets = fromtxt_to_numpy(filename='dataset_evaluations/FordA_TEST.txt', valid_len=None)
         mytestdata = inp_out_pairs(test_series, test_targets)
         mytestdata = FordA_dataset(mytestdata)
 
